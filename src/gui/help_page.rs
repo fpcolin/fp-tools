@@ -59,7 +59,7 @@ pub fn layout(ui: &Ui, _m: &mut Model, width: f32) -> Frame {
     f.text(RectF::new(x, 28.0, avail, 36.0), "Help", Font::Title, c::NAVY, DT_SINGLELINE);
     f.text(
         RectF::new(x, 68.0, avail, 20.0),
-        &format!("Flooring Partners Tools {}", APP.version),
+        &format!("{} {}", crate::app::DISPLAY_NAME, APP.version),
         Font::Body,
         c::MUTED,
         DT_SINGLELINE,

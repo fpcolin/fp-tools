@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const COMPANY: &str = "Flooring Partners";
-const PRODUCT: &str = "Flooring Partners Tools";
-const DESCRIPTION: &str = "Flooring Partners Tools";
+const PRODUCT: &str = "Flooring Partners App";
+const DESCRIPTION: &str = "Flooring Partners App";
 const EXE_NAME: &str = "FPTools";
 
 fn main() {

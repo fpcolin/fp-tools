@@ -1,4 +1,4 @@
-# Flooring Partners Tools
+# Flooring Partners App
 
 One Windows desktop app for Flooring Partners that replaces two older ones:
 
@@ -62,7 +62,10 @@ Run `FPTools-<version>-setup.exe` from the
 [latest release](https://github.com/fpcolin/fp-tools/releases/latest).
 
 - **For all users (default).** Installs to
-  `C:\Program Files\Flooring Partners\Tools`. This needs administrator
+  `C:\Program Files\Flooring Partners\Tools` (the folder keeps the app's
+  earlier name, as do the program file `FPTools.exe` and the settings
+  folder, so existing installs, pinned shortcuts and scripts keep working).
+  This needs administrator
   approval. Only administrators can change the program files.
 - **For me only.** Pick it on the first page of Setup. Installs to
   `%LOCALAPPDATA%\Programs\...` without admin rights.
@@ -176,7 +179,7 @@ UTF-8 or UTF-16. If it exists but can't be read, updates stay off.
 
 ## Using it
 
-Open **Flooring Partners Tools** from the Start menu.
+Open **Flooring Partners App** from the Start menu.
 
 - **QR codes:** choose *Web address* or *Contact card*, type, check the
   preview, click **Save QR code** (or press Enter).
@@ -220,6 +223,13 @@ saved in the user's own profile and stays locked from the checksum until the
 installer finishes, so nothing can swap it in between. For a machine-wide
 install, Windows asks for administrator approval. The program then reopens as
 the user who was using it, not as the administrator.
+
+## Changes in 3.0.2
+
+- Renamed from *Flooring Partners Tools* to **Flooring Partners App**: the
+  window, Start menu and desktop shortcuts, Apps & features and the installer
+  use the new name. The program file (`FPTools.exe`), its folders and the
+  settings are unchanged, so nothing has to be set up again.
 
 ## Changes in 3.0.1
 

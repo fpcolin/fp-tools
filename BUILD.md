@@ -1,4 +1,4 @@
-# Building and releasing Flooring Partners Tools
+# Building and releasing Flooring Partners App
 
 ## Layout
 

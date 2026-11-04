@@ -1,10 +1,12 @@
-; Inno Setup script for Flooring Partners Tools (QR codes and the VendorCafe
+; Inno Setup script for Flooring Partners App (QR codes and the VendorCafe
 ; CSV converter in one program).
 ; Build the exe first (cargo build --release), then from the repo root:
 ;   iscc build\installer.iss
 ; Requires Inno Setup 6.3+ (7.x works too).
 
-#define AppName        "Flooring Partners Tools"
+#define AppName        "Flooring Partners App"
+; The name used up to 3.0.1, whose shortcuts are replaced on upgrade.
+#define OldAppName     "Flooring Partners Tools"
 ; CI passes /DAppVersion=x.y.z from Cargo.toml; the fallback keeps local builds working.
 #ifndef AppVersion
   #define AppVersion   "3.0.0"
@@ -82,6 +84,13 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 ; for removal by the program itself, after it has copied their settings.
 ; Unattended installs that must keep the old apps: /MERGETASKS="!removeoldapps"
 Name: "removeoldapps"; Description: "Remove the separate QR Code Generator and VendorCafe CSV Converter apps (installed for all users)"; GroupDescription: "Replaced programs:"; Check: OldAppsForAllUsers
+
+[InstallDelete]
+; Up to 3.0.1 this was "Flooring Partners Tools": remove those shortcuts so an
+; upgrade doesn't leave two. (Taskbar pins point at the exe, whose name is
+; unchanged, and keep working.)
+Type: files; Name: "{autoprograms}\{#OldAppName}.lnk"
+Type: files; Name: "{autodesktop}\{#OldAppName}.lnk"
 
 [Files]
 ; One self-contained executable. No DLLs are shipped.

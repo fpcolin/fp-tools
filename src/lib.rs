@@ -1,4 +1,4 @@
-//! Flooring Partners Tools: the QR code generator and the VendorCafe CSV
+//! Flooring Partners App: the QR code generator and the VendorCafe CSV
 //! converter in one program.
 //!
 //! * [`generator`] - turn a web address or contact into a PNG, save it, show it

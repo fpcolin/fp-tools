@@ -5,7 +5,10 @@ use crate::common::AppInfo;
 
 pub const APP: AppInfo = AppInfo {
     vendor: "Flooring Partners",
-    // Also the settings folder: %LOCALAPPDATA%\Flooring Partners\Tools.
+    // Internal name, used for the settings and update folders
+    // (%LOCALAPPDATA%\Flooring Partners\Tools). Kept from when the program was
+    // called "Flooring Partners Tools" so existing settings are found; the
+    // name people see is DISPLAY_NAME.
     name: "Tools",
     // Cargo.toml is the single source of truth for the version.
     version: env!("CARGO_PKG_VERSION"),
@@ -22,4 +25,4 @@ pub const APP: AppInfo = AppInfo {
 };
 
 /// Window title and the name shown in Apps & features.
-pub const DISPLAY_NAME: &str = "Flooring Partners Tools";
+pub const DISPLAY_NAME: &str = "Flooring Partners App";

@@ -1011,7 +1011,10 @@ pub fn main_handle() -> usize {
 }
 
 fn fatal() -> Option<LRESULT> {
-    message("Something went wrong and Flooring Partners Tools has to close.\n\nYour settings are saved.", MB_ICONERROR);
+    message(
+        &format!("Something went wrong and {DISPLAY_NAME} has to close.\n\nYour settings are saved."),
+        MB_ICONERROR,
+    );
     std::process::exit(1);
 }
 

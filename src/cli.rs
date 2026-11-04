@@ -49,7 +49,7 @@ pub fn run(args: &[String]) -> ExitCode {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     match args.as_slice() {
         [] | ["help" | "--help" | "-h" | "/?"] => {
-            println!("{}\n\n{USAGE}", APP.title());
+            println!("{} v{}\n\n{USAGE}", crate::app::DISPLAY_NAME, APP.version);
             ExitCode::SUCCESS
         }
         ["--version" | "-V"] => {

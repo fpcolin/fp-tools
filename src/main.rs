@@ -1,4 +1,4 @@
-//! Flooring Partners Tools. With no arguments it opens the window; with
+//! Flooring Partners App. With no arguments it opens the window; with
 //! arguments it runs a command-line action (see `FPTools help`).
 
 // A GUI program: no console window flashes up when it is started from the

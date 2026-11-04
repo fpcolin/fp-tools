@@ -19,7 +19,7 @@ concurrency:
 
 env:
   APP_EXE: FPTools
-  APP_TITLE: Flooring Partners Tools
+  APP_TITLE: Flooring Partners App
   # Untrusted values reach scripts only through environment variables, never
   # by pasting ${{ }} expressions into script text (which allowed command
   # injection through a crafted tag name in the previous workflow).

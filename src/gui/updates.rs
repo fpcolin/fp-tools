@@ -130,7 +130,7 @@ pub fn sidebar_layout(ui: &Ui, m: &mut Model, height: f32) -> Frame {
         c::WHITE,
         DT_SINGLELINE | DT_END_ELLIPSIS,
     );
-    f.text(RectF::new(72.0, 41.0, 150.0, 18.0), "Tools", Font::Small, c::NAV_MUTED, DT_SINGLELINE);
+    f.text(RectF::new(72.0, 41.0, 150.0, 18.0), "App", Font::Small, c::NAV_MUTED, DT_SINGLELINE);
 
     let ys = [88.0, 132.0, 198.0, 242.0];
     for (i, y) in ys.into_iter().enumerate() {
@@ -421,8 +421,9 @@ pub fn check_old_apps() {
     super::update_settings(|s| s.old_apps_prompted = true);
     let names: Vec<&str> = found.iter().filter(|a| a.removable()).map(|a| a.name).collect();
     let question = format!(
-        "Flooring Partners Tools replaces the separate {} app{}. Your settings from {} have been copied here.\n\n\
+        "{} replaces the separate {} app{}. Your settings from {} have been copied here.\n\n\
          Remove the old app{} now?",
+        crate::app::DISPLAY_NAME,
         names.join(" and "),
         if names.len() > 1 { "s" } else { "" },
         if names.len() > 1 { "them" } else { "it" },
