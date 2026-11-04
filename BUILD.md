@@ -316,7 +316,35 @@ To sign locally, run
 `iscc /DSign "/Sfpsign=signtool sign /a /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $f" build\installer.iss`.
 
 Always timestamp (`/tr`), or signatures stop validating when the certificate
-expires. Many CAs now issue OV certificates only on hardware tokens, which
+expires.
+
+### Self-signed (in-house) certificate
+
+For a program that is only installed on company PCs, a certificate you make
+yourself works as well as a bought one, at no cost:
+
+1. On Windows, run `powershell -ExecutionPolicy Bypass -File
+   build\new-signing-cert.ps1`. It creates `FP-CodeSigning.pfx` (secret: the
+   private key) and `FP-CodeSigning.cer` (public), and copies the `.pfx` as
+   base64 to the clipboard.
+2. Add the GitHub secrets `SIGNING_PFX_BASE64` (the clipboard) and
+   `SIGNING_PFX_PASSWORD`. The workflow notices the certificate is
+   self-signed and trusts it on the build runner only, so that its signature
+   check passes.
+3. IT deploys `FP-CodeSigning.cer` to the PCs' **Trusted Root Certification
+   Authorities** store (Group Policy: Computer Configuration → Policies →
+   Windows Settings → Security Settings → Public Key Policies; or an Intune
+   "Trusted certificate" profile). Windows then shows the signature as valid,
+   with "Flooring Partners" as the publisher.
+4. IT allows the certificate in ThreatLocker, so every future signed version
+   is allowed without a new policy.
+
+Limits: SmartScreen gives no reputation to a self-signed certificate, so an
+installer downloaded with a web browser still gets the "Windows protected
+your PC" warning. Installs pushed by IT and the in-app updater are not
+affected (SmartScreen only checks files a browser marked as downloaded).
+Anyone with the `.pfx` and its password can sign programs your PCs will
+trust, so treat it like an admin password. Many CAs now issue OV certificates only on hardware tokens, which
 can't be used this way. Azure Artifact Signing (around $10/month, OIDC, no
 stored key) is the usual alternative. Replace the two signing steps with
 `azure/artifact-signing-action`, pinned to a commit SHA, and use a **Public

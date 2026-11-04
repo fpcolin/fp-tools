@@ -103,6 +103,7 @@ jobs:
         shell: pwsh
         env:
           PFX_B64: ${{ secrets.SIGNING_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
         run: |
           if (-not $env:PFX_B64) {
             Write-Host "No signing certificate configured - skipping signing."
@@ -120,6 +121,19 @@ jobs:
                   Where-Object { $_.FullName -match '\\x64\\' } |
                   Sort-Object FullName -Descending | Select-Object -First 1
           if (-not $tool) { throw "signtool.exe not found on the runner." }
+
+          # A self-signed certificate (build/new-signing-cert.ps1) is trusted
+          # only on the company's PCs, not on this runner, so the signature
+          # check after building the installer would fail. Trust its public
+          # half on this throwaway runner only; nothing leaves the job.
+          $cert = [Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, $env:PFX_PASSWORD)
+          if ($cert.Subject -eq $cert.Issuer) {
+            Write-Host "Self-signed certificate $($cert.Thumbprint): trusting it on this runner for verification."
+            $public = [Security.Cryptography.X509Certificates.X509Certificate2]::new($cert.Export('Cert'))
+            $store = [Security.Cryptography.X509Certificates.X509Store]::new('Root', 'LocalMachine')
+            $store.Open('ReadWrite'); $store.Add($public); $store.Close()
+          }
+          $cert.Dispose()
 
           "enabled=true"               | Out-File $env:GITHUB_OUTPUT -Append
           "pfx=$pfx"                   | Out-File $env:GITHUB_OUTPUT -Append

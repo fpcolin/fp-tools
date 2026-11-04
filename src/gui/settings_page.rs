@@ -1,7 +1,5 @@
 //! "Settings": everything that is remembered, per user.
 
-use std::path::Path;
-
 use super::canvas::RectF;
 use super::layout::{Frame, Item, text_height, text_width};
 use super::qr_page;
@@ -10,7 +8,6 @@ use super::updates::{self, UpdateState};
 use super::win32::*;
 use super::{Model, PageId, Ui, ui, update_settings, widgets, with};
 use crate::APP;
-use crate::config::DEFAULT_LOGO;
 
 const ID_CHANGE_FOLDER: u16 = 400;
 const ID_FILE_NAME: u16 = 401;
@@ -56,7 +53,7 @@ pub fn create(page: HWND) -> Controls {
     let name_hint = widgets::label(page, NAME_HINT, Font::Small, c::MUTED, w);
     let logo_name = widgets::label_styled(page, "", Font::Body, c::TEXT, w, SS_NOPREFIX | SS_PATHELLIPSIS);
     let logo_choose = widgets::button(page, ID_LOGO_CHOOSE, "Use my own image…", ButtonKind::Secondary, w);
-    let logo_default = widgets::button(page, ID_LOGO_DEFAULT, "Use the Flooring Partners logo", ButtonKind::Link, w);
+    let logo_default = widgets::button(page, ID_LOGO_DEFAULT, "Reset to default", ButtonKind::Secondary, w);
     let embed = widgets::checkbox(page, ID_EMBED, "Put a logo in the middle of QR codes", w);
     let round = widgets::checkbox(page, ID_ROUND, "Rounded corners", w);
     let open_image = widgets::checkbox(page, ID_OPEN_IMAGE, "Open the image after saving", w);
@@ -135,12 +132,12 @@ pub fn sync() {
         widgets::set_text(s.name, &qr.saveto_name);
         widgets::clear_modified(s.name);
     }
-    let logo_text = if qr.embed_image == DEFAULT_LOGO {
-        "Flooring Partners logo".to_string()
-    } else {
-        Path::new(&qr.embed_image).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
-    };
-    widgets::set_text(s.logo_name, &logo_text);
+    let status = qr_page::logo_status(&qr.embed_image);
+    widgets::set_text(s.logo_name, &status.short_text());
+    super::theme::set_colors(s.logo_name, status.text_color(true), c::WHITE);
+    // Always there, so it's clear the default can be brought back; only
+    // clickable while another image is in use.
+    widgets::enable(s.logo_default, status.custom);
     widgets::set_checked(s.embed, qr.option_embed_logo);
     widgets::set_checked(s.round, qr.option_round_edges);
     widgets::set_checked(s.open_image, qr.option_open_image);
@@ -197,17 +194,16 @@ pub fn layout(ui: &Ui, m: &mut Model, width: f32) -> Frame {
     row_label(&mut f, y + 14.0, "Logo");
     let thumb = RectF::new(cx, y, 48.0, 48.0);
     f.panel(thumb, c::WHITE, c::BORDER, 10.0);
-    if let Some(bmp) = super::logo_bitmap(m, &cfg.qr.embed_image, super::theme::px(40.0), c::WHITE) {
-        f.items.push(Item::Image(RectF::new(cx + 4.0, y + 4.0, 40.0, 40.0), bmp));
-    } else {
-        f.items.push(Item::Icon(RectF::new(cx + 12.0, y + 12.0, 24.0, 24.0), Icon::Alert, c::ERROR));
+    let missing = qr_page::logo_status(&cfg.qr.embed_image).missing;
+    match (!missing).then(|| super::logo_bitmap(m, &cfg.qr.embed_image, super::theme::px(40.0), c::WHITE)).flatten() {
+        Some(bmp) => f.items.push(Item::Image(RectF::new(cx + 4.0, y + 4.0, 40.0, 40.0), bmp)),
+        None => f.items.push(Item::Icon(RectF::new(cx + 12.0, y + 12.0, 24.0, 24.0), Icon::Alert, c::ERROR)),
     }
-    let custom = cfg.qr.embed_image != DEFAULT_LOGO;
     let choose_w = text_width(Font::Body, "Use my own image…") + 36.0;
+    let default_w = text_width(Font::Body, "Reset to default") + 36.0;
     f.place(s.logo_name, RectF::new(cx + 64.0, y + 2.0, cw - 64.0, 20.0));
     f.place(s.logo_choose, RectF::new(cx + 64.0, y + 26.0, choose_w, 36.0));
-    let default_w = text_width(Font::Bold, "Use the Flooring Partners logo") + 24.0;
-    f.show_if(s.logo_default, custom, RectF::new(cx + 64.0 + choose_w + 8.0, y + 27.0, default_w, 34.0));
+    f.place(s.logo_default, RectF::new(cx + 64.0 + choose_w + 10.0, y + 26.0, default_w, 36.0));
     y += 78.0;
     for cb in [s.embed, s.round, s.open_image, s.open_folder] {
         f.place(cb, RectF::new(cx, y, cw, 24.0));

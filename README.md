@@ -221,6 +221,14 @@ installer finishes, so nothing can swap it in between. For a machine-wide
 install, Windows asks for administrator approval. The program then reopens as
 the user who was using it, not as the administrator.
 
+## Changes in 3.0.1
+
+- The logo has a visible **Reset to default** (back to the Flooring Partners
+  logo) on the QR codes page and in Settings, and the name of the image in use
+  is shown next to it.
+- If your own logo file has been moved or deleted, the app now says so instead
+  of quietly saving QR codes without a logo.
+
 ## Changes in 3.0
 
 - The QR Code Generator and VendorCafe CSV Converter are now one program with

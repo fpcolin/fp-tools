@@ -28,6 +28,7 @@ const ID_OPEN_FOLDER: u16 = 225;
 const ID_SAVE: u16 = 226;
 const ID_CLEAR: u16 = 227;
 const ID_SHOW: u16 = 228;
+const ID_LOGO_RESET: u16 = 229;
 
 /// Contact fields in grid order, with their keyboard shortcuts.
 const CONTACT_LABELS: [&str; 8] =
@@ -45,7 +46,9 @@ pub struct Controls {
     pub contact: [HWND; 8],
     pub contact_hint: HWND,
     pub logo: HWND,
+    pub logo_name: HWND,
     pub logo_change: HWND,
+    pub logo_reset: HWND,
     pub round: HWND,
     pub save_path: HWND,
     pub save_change: HWND,
@@ -112,7 +115,9 @@ pub fn create(page: HWND) -> Controls {
         w,
     );
     let logo = widgets::checkbox(page, ID_LOGO, "Put a logo in the middle", w);
+    let logo_name = widgets::label_styled(page, "", Font::Body, c::TEXT, w, SS_NOPREFIX | SS_ENDELLIPSIS);
     let logo_change = widgets::button(page, ID_LOGO_CHANGE, "Change logo…", ButtonKind::Link, w);
+    let logo_reset = widgets::button(page, ID_LOGO_RESET, "Reset to default", ButtonKind::Link, w);
     let round = widgets::checkbox(page, ID_ROUND, "Rounded corners", w);
     let save_path = widgets::path_label(page, Font::Body, c::TEXT, w);
     let save_change = widgets::button(page, ID_SAVE_CHANGE, "Change…", ButtonKind::Link, w);
@@ -131,7 +136,9 @@ pub fn create(page: HWND) -> Controls {
         contact,
         contact_hint,
         logo,
+        logo_name,
         logo_change,
+        logo_reset,
         round,
         save_path,
         save_change,
@@ -163,8 +170,52 @@ pub fn sync() {
     widgets::set_checked(q.open_image, s.option_open_image);
     widgets::set_checked(q.open_folder, s.option_open_folder);
     widgets::set_text(q.save_path, &save_target(&s.saveto_path, &s.saveto_name));
+    let status = logo_status(&s.embed_image);
+    widgets::set_text(q.logo_name, &status.short_text());
+    theme::set_colors(q.logo_name, status.text_color(s.option_embed_logo), c::WHITE);
     widgets::enable(q.logo_change, s.option_embed_logo);
+    widgets::enable(q.logo_reset, s.option_embed_logo);
     set_banner_controls(q.result_text, q.result_show, banner.as_ref());
+}
+
+/// Which image goes in the middle of QR codes, for showing to the user.
+pub struct LogoStatus {
+    /// The user chose their own image (rather than the built-in logo).
+    pub custom: bool,
+    /// Their image is no longer there; QR codes are saved without a logo, as
+    /// in the old app.
+    pub missing: bool,
+    /// "Flooring Partners logo" or the image's file name.
+    pub name: String,
+}
+
+impl LogoStatus {
+    pub fn short_text(&self) -> String {
+        match (self.custom, self.missing) {
+            (false, _) => "Flooring Partners logo (default)".into(),
+            (true, false) => self.name.clone(),
+            (true, true) => format!("{}: file not found", self.name),
+        }
+    }
+
+    pub fn text_color(&self, enabled: bool) -> u32 {
+        if !enabled {
+            c::MUTED
+        } else if self.missing {
+            c::ERROR
+        } else {
+            c::TEXT
+        }
+    }
+}
+
+pub fn logo_status(embed_image: &str) -> LogoStatus {
+    if embed_image == DEFAULT_LOGO {
+        return LogoStatus { custom: false, missing: false, name: "Flooring Partners logo".into() };
+    }
+    let path = std::path::Path::new(embed_image);
+    let name = path.file_name().map_or_else(|| embed_image.to_string(), |n| n.to_string_lossy().into_owned());
+    LogoStatus { custom: true, missing: !path.is_file(), name }
 }
 
 /// Colours and text of a result banner's label and button.
@@ -272,21 +323,32 @@ pub fn layout(ui: &Ui, m: &mut Model, width: f32) -> Frame {
     y += 22.0;
     f.text(RectF::new(x0, y, iw, 20.0), "Look", Font::Bold, c::TEXT, DT_SINGLELINE);
     y += 32.0;
-    let cb_w = text_width(Font::Body, "Put a logo in the middle") + 32.0;
-    f.place(q.logo, RectF::new(x0, y, cb_w, 24.0));
-    let thumb_x = x0 + cb_w + 14.0;
-    let thumb = RectF::new(thumb_x, y - 6.0, 36.0, 36.0);
-    f.panel(thumb, c::WHITE, c::BORDER, 8.0);
-    let source = if s.option_embed_logo { s.embed_image.clone() } else { String::new() };
-    if let Some(bmp) = (!source.is_empty()).then(|| super::logo_bitmap(m, &source, theme::px(28.0), c::WHITE)).flatten()
-    {
-        f.items.push(Item::Image(RectF::new(thumb_x + 4.0, y - 2.0, 28.0, 28.0), bmp));
+    f.place(q.logo, RectF::new(x0, y, iw, 24.0));
+    y += 34.0;
+    // The image, with Change and Reset, indented under the check box.
+    let lx = x0 + 24.0;
+    let status = logo_status(&s.embed_image);
+    f.panel(RectF::new(lx, y, 48.0, 48.0), c::WHITE, c::BORDER, 9.0);
+    let bmp = if s.option_embed_logo && !status.missing {
+        super::logo_bitmap(m, &s.embed_image, theme::px(40.0), c::WHITE)
     } else {
-        f.items.push(Item::Icon(RectF::new(thumb_x + 8.0, y + 2.0, 20.0, 20.0), Icon::Qr, c::FIELD_BORDER));
+        None
+    };
+    match bmp {
+        Some(bmp) => f.items.push(Item::Image(RectF::new(lx + 4.0, y + 4.0, 40.0, 40.0), bmp)),
+        None if s.option_embed_logo => {
+            f.items.push(Item::Icon(RectF::new(lx + 12.0, y + 12.0, 24.0, 24.0), Icon::Alert, c::ERROR))
+        }
+        None => f.items.push(Item::Icon(RectF::new(lx + 12.0, y + 12.0, 24.0, 24.0), Icon::Qr, c::FIELD_BORDER)),
     }
+    let tx = lx + 62.0;
+    f.place(q.logo_name, RectF::new(tx, y + 2.0, (x0 + iw - tx).max(40.0), 20.0));
+    // Link buttons pad their text by 12 DIPs; line the text up with the name.
     let change_w = text_width(Font::Bold, "Change logo…") + 24.0;
-    f.place(q.logo_change, RectF::new(thumb_x + 44.0, y - 5.0, change_w, 34.0));
-    y += 36.0;
+    let reset_w = text_width(Font::Bold, "Reset to default") + 24.0;
+    f.place(q.logo_change, RectF::new(tx - 12.0, y + 22.0, change_w, 30.0));
+    f.show_if(q.logo_reset, status.custom, RectF::new(tx - 12.0 + change_w + 4.0, y + 22.0, reset_w, 30.0));
+    y += 48.0 + 16.0;
     f.place(q.round, RectF::new(x0, y, iw, 24.0));
     y += 24.0 + 24.0;
 
@@ -347,7 +409,12 @@ pub fn layout(ui: &Ui, m: &mut Model, width: f32) -> Frame {
                 }
             };
             preview_items.push(Item::Image(img_rect, bmp));
-            (format!("Updates as you type.\nSaves as a {} × {} px PNG.", img.width, img.height), c::MUTED)
+            let note = if s.option_embed_logo && logo_status(&s.embed_image).missing {
+                "\nYour logo file wasn't found, so no logo is added."
+            } else {
+                ""
+            };
+            (format!("Updates as you type.\nSaves as a {} × {} px PNG.{note}", img.width, img.height), c::MUTED)
         }
         Preview::Empty(hint) => {
             preview_items.push(Item::Panel(img_rect, c::SURFACE_ALT, c::BORDER, 10.0));
@@ -531,6 +598,11 @@ pub fn command(id: u16, code: u16, _control: HWND) {
             settings_changed();
         }
         (ID_LOGO_CHANGE, BN_CLICKED) => choose_logo(),
+        (ID_LOGO_RESET, BN_CLICKED) => {
+            use_default_logo();
+            // The Reset link is gone now; keep the keyboard focus nearby.
+            widgets::focus(q.logo_change);
+        }
         (ID_SAVE_CHANGE, BN_CLICKED) => {
             choose_save_location();
         }
@@ -646,8 +718,9 @@ pub fn choose_logo() {
     settings_changed();
 }
 
-/// Back to the built-in logo.
+/// Back to the built-in Flooring Partners logo.
 pub fn use_default_logo() {
     update_settings(|s| s.qr.embed_image = DEFAULT_LOGO.to_string());
+    with(|m| m.qr.logo = None);
     settings_changed();
 }
