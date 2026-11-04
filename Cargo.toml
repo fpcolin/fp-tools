@@ -1,0 +1,47 @@
+[package]
+name = "fp-tools"
+# Single source of truth for the version: the exe's file properties, the
+# installer and the release tag are all derived from this.
+version = "3.0.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Flooring Partners Tools: QR codes and the VendorCafe CSV converter"
+license = "MIT"
+publish = false
+build = "build.rs"
+
+[lib]
+name = "fp_tools"
+path = "src/lib.rs"
+
+[[bin]]
+name = "FPTools"
+path = "src/main.rs"
+
+[dependencies]
+# HTTPS for the update check, in pure Rust so no Windows networking or
+# certificate DLLs are loaded. Default features off: no aws-lc (needs cmake
+# and NASM to build), no logging.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
+# Already a dependency of rustls; used directly for SHA-256 and random numbers.
+ring = "0.17"
+
+[patch.crates-io]
+# ring's random numbers come from getrandom 0.2, which would import bcrypt.dll
+# and advapi32.dll. This local stand-in uses the RNG the standard library
+# already imports. See vendor/getrandom-shim/src/lib.rs.
+getrandom = { path = "vendor/getrandom-shim" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+# The image codecs are slow unoptimised; keep tests quick.
+[profile.test]
+opt-level = 2
+
+[profile.dev.package."*"]
+opt-level = 2

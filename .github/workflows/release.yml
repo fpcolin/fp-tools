@@ -1,0 +1,232 @@
+name: Release
+
+# Fires on a version tag, e.g. `git tag v3.0.1 && git push origin v3.0.1`.
+#
+# The release is created as a DRAFT: check it, then press "Publish release"
+# on GitHub. Only published releases are offered to installed copies by the
+# updater. To publish automatically instead, set the repository variable
+# AUTO_PUBLISH to "true" (Settings -> Secrets and variables -> Actions ->
+# Variables).
+on:
+  push:
+    tags: ['v*']
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  APP_EXE: FPTools
+  APP_TITLE: Flooring Partners Tools
+  # Untrusted values reach scripts only through environment variables, never
+  # by pasting ${{ }} expressions into script text (which allowed command
+  # injection through a crafted tag name in the previous workflow).
+  TAG: ${{ github.ref_name }}
+  FP_REQUIRE_RESOURCES: '1'
+  CARGO_TERM_COLOR: never
+
+jobs:
+  build:
+    runs-on: windows-latest
+    # Read-only token: nothing in this job can modify the repository.
+    permissions:
+      contents: read
+
+    steps:
+      # Third-party actions are pinned to a full commit SHA, not a movable tag.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      # Cargo.toml is the single source of truth for the version. Failing here
+      # is much cheaper than shipping an installer whose version disagrees with
+      # the app, which would make the updater re-offer the same release forever.
+      - name: Check tag matches Cargo.toml version
+        shell: pwsh
+        run: |
+          $line = Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1
+          $ver = $line.Matches[0].Groups[1].Value
+          if ($ver -notmatch '^\d+\.\d+\.\d+$') { throw "Unexpected version '$ver' in Cargo.toml" }
+          if ($env:TAG -ne "v$ver") { throw "Tag '$env:TAG' does not match version $ver in Cargo.toml (expected v$ver)" }
+          "VERSION=$ver" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Building version $ver"
+
+      # The updater only accepts installers under download_prefix in
+      # src/app.rs. If the repository was renamed or moved, every installed
+      # copy would reject this release, so stop here instead.
+      - name: Check update URL matches this repository
+        shell: pwsh
+        run: |
+          $line = Select-String -Path src\app.rs -Pattern 'download_prefix:\s*"([^"]+)"' | Select-Object -First 1
+          $prefix = $line.Matches[0].Groups[1].Value
+          $expected = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/"
+          if ($prefix -cne $expected) { throw "download_prefix in src/app.rs is '$prefix' but this repository publishes to '$expected'" }
+
+      - name: Install Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+
+      # Installed before any signing material touches the disk.
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      # Binary assets are easy to leave uncommitted. Check here so the failure
+      # names the missing file instead of surfacing as a resource-compiler error.
+      - name: Check assets are committed
+        shell: pwsh
+        run: |
+          $missing = @('assets\fp.ico', 'assets\fp_logo.png', 'assets\app.manifest', 'Cargo.lock') | Where-Object { -not (Test-Path $_) }
+          if ($missing) { throw "Missing from the repository: $($missing -join ', ')" }
+
+      - name: Test
+        run: cargo test --locked --release
+
+      - name: Build
+        run: cargo build --locked --release
+
+      # Fails the release if the exe imports any DLL not listed in
+      # build/allowed-dlls.txt, so application-control policies stay valid.
+      - name: Check DLL imports
+        shell: pwsh
+        run: ./build/check-imports.ps1 "target/release/$env:APP_EXE.exe"
+
+      # Signing is skipped automatically when the secret is absent, so forks and
+      # unsigned test builds still work. Set SIGNING_PFX_BASE64 and
+      # SIGNING_PFX_PASSWORD in Settings -> Secrets and variables -> Actions.
+      - name: Prepare signing
+        id: signing
+        shell: pwsh
+        env:
+          PFX_B64: ${{ secrets.SIGNING_PFX_BASE64 }}
+        run: |
+          if (-not $env:PFX_B64) {
+            Write-Host "No signing certificate configured - skipping signing."
+            "enabled=false" | Out-File $env:GITHUB_OUTPUT -Append
+            exit 0
+          }
+          # Outside the workspace so it can never be picked up by a later glob
+          # and published as a release asset.
+          $pfx = Join-Path $env:RUNNER_TEMP 'signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_B64))
+
+          # signtool ships with the Windows SDK and is not on PATH by default.
+          $tool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" `
+                    -Filter signtool.exe -Recurse -ErrorAction SilentlyContinue |
+                  Where-Object { $_.FullName -match '\\x64\\' } |
+                  Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $tool) { throw "signtool.exe not found on the runner." }
+
+          "enabled=true"               | Out-File $env:GITHUB_OUTPUT -Append
+          "pfx=$pfx"                   | Out-File $env:GITHUB_OUTPUT -Append
+          "signtool=$($tool.FullName)" | Out-File $env:GITHUB_OUTPUT -Append
+
+      # Sign the app exe BEFORE Inno packages it, or the installed program is
+      # unsigned even though the installer is signed.
+      - name: Sign application
+        if: steps.signing.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
+          SIGNTOOL: ${{ steps.signing.outputs.signtool }}
+          PFX: ${{ steps.signing.outputs.pfx }}
+        run: |
+          & $env:SIGNTOOL sign /f $env:PFX /p $env:PFX_PASSWORD `
+            /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
+            "target\release\$env:APP_EXE.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Signing the application failed ($LASTEXITCODE)." }
+
+      # With signing enabled, Inno signs both Setup and the uninstaller it
+      # embeds (SignTool in installer.iss). Signing must happen BEFORE the
+      # manifest is generated: it rewrites the file, so an earlier checksum
+      # would never match what users download.
+      - name: Build installer
+        shell: pwsh
+        env:
+          SIGNING: ${{ steps.signing.outputs.enabled }}
+          PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
+          SIGNTOOL: ${{ steps.signing.outputs.signtool }}
+          PFX: ${{ steps.signing.outputs.pfx }}
+        run: |
+          # Find ISCC rather than hardcoding a version-specific path. Note the
+          # braced ${env:ProgramFiles(x86)}: "$env:ProgramFiles(x86)" inside a
+          # string expands the variable and appends a literal "(x86)".
+          $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ }
+          $iscc = $null
+          foreach ($r in $roots) {
+            $hit = Get-ChildItem -Path (Join-Path $r 'Inno Setup*') -Filter ISCC.exe `
+                     -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($hit) { $iscc = $hit.FullName; break }
+          }
+          if (-not $iscc) { $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source }
+          if (-not $iscc) { throw "ISCC.exe not found. Searched: $($roots -join '; ')" }
+          Write-Host "Using $iscc"
+
+          $isccArgs = @("/DAppVersion=$env:VERSION")
+          if ($env:SIGNING -eq 'true') {
+            # Inno substitutes $q with a quote and $f with the quoted file name.
+            $cmd = '$q' + $env:SIGNTOOL + '$q sign /f $q' + $env:PFX + '$q /p $q' + $env:PFX_PASSWORD +
+                   '$q /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $f'
+            $isccArgs += '/DSign', "/Sfpsign=$cmd"
+          }
+          & $iscc @isccArgs build\installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+
+          if ($env:SIGNING -eq 'true') {
+            & $env:SIGNTOOL verify /pa /v "dist\installer\$env:APP_EXE-$env:VERSION-setup.exe"
+            if ($LASTEXITCODE -ne 0) { throw "The installer signature did not verify." }
+          }
+
+      - name: Remove signing certificate
+        if: always()
+        shell: pwsh
+        run: Remove-Item (Join-Path $env:RUNNER_TEMP 'signing.pfx') -Force -ErrorAction SilentlyContinue
+
+      # The base URL points at THIS tag's assets, so the manifest records a
+      # versioned installer URL that stays valid after later releases.
+      - name: Generate update manifest
+        shell: pwsh
+        run: |
+          ./build/publish.ps1 `
+            -Installer "dist/installer/$env:APP_EXE-$env:VERSION-setup.exe" `
+            -Version $env:VERSION `
+            -BaseUrl "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:TAG" `
+            -Notes 'See the release notes on GitHub.'
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: |
+            dist/installer/*-setup.exe
+            dist/installer/version.json
+          if-no-files-found: error
+          retention-days: 7
+
+  # Only this small job can write to the repository, and it runs nothing but
+  # the GitHub CLI on already-built files.
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: release
+          path: release
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          AUTO_PUBLISH: ${{ vars.AUTO_PUBLISH }}
+        run: |
+          set -euo pipefail
+          draft="--draft"
+          if [ "${AUTO_PUBLISH:-}" = "true" ]; then draft=""; fi
+          gh release create "$TAG" release/*-setup.exe release/version.json \
+            --title "$APP_TITLE ${TAG#v}" --generate-notes $draft

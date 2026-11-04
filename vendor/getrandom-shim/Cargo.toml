@@ -1,0 +1,21 @@
+[package]
+# Stands in for the crates.io `getrandom` 0.2 crate, which `ring` (the TLS
+# crypto library) depends on. See src/lib.rs for why.
+name = "getrandom"
+version = "0.2.17"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "getrandom 0.2 API backed by ProcessPrng, so no extra Windows DLLs are imported"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+# Present only so that dependents' feature lists still resolve. None of them
+# change behaviour here.
+std = []
+js = []
+custom = []
+rdrand = []
+linux_disable_fallback = []

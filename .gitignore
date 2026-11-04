@@ -1,0 +1,13 @@
+# Build output
+/target/
+/dist/
+
+# Signing material must never be committed
+*.pfx
+*.p12
+.env
+
+# Editor / IDE
+/.vs/
+/.vscode/
+*.swp

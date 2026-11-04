@@ -1,0 +1,31 @@
+# DLLs the release executable may import. The release workflow fails if the
+# exe imports anything else, so a new dependency can never quietly add a DLL
+# that application-control software (ThreatLocker etc.) would need a policy
+# for. One exact name per line, case-insensitive. Wildcards are deliberately
+# not supported: an API-set prefix such as api-ms-win-core-* would also match
+# sets that pull in COM and other DLLs.
+#
+# Loaded into every Windows process anyway:
+kernel32.dll
+ntdll.dll
+# API sets: virtual names Windows resolves to kernelbase.dll, which is also
+# always loaded. synch = locks used by the standard library; registry = the
+# Windows proxy setting read by the update check.
+api-ms-win-core-synch-l1-2-0.dll
+api-ms-win-core-registry-l1-1-0.dll
+# The Rust standard library's random number source (HashMap seeds; also
+# used for TLS through the getrandom shim).
+bcryptprimitives.dll
+# Sockets, for the HTTPS update check. When it runs, ws2_32 itself loads
+# helpers such as mswsock.dll and dnsapi.dll; that is true of any program
+# that uses the network and is not visible in the import table.
+ws2_32.dll
+#
+# The window. Every Windows program with a window uses these two:
+user32.dll
+gdi32.dll
+# The standard Open and Save As dialogs ("Choose file...", "Change...").
+# While a dialog is open, Windows itself loads the shell DLLs it needs
+# (shell32, comctl32, ...); that is true of any program that shows these
+# dialogs and is not visible in the import table.
+comdlg32.dll
