@@ -1,8 +1,20 @@
 ; Inno Setup script for Flooring Partners App (QR codes and the VendorCafe
 ; CSV converter in one program).
 ; Build the exe first (cargo build --release), then from the repo root:
-;   iscc build\installer.iss
+;   iscc build\installer.iss                 the normal installer
+;   iscc /DHandover build\installer.iss      the handover installer (below)
 ; Requires Inno Setup 6.3+ (7.x works too).
+;
+; The HANDOVER installer is what the old QR Code Generator and VendorCafe CSV
+; Converter download when they "update" (their repositories publish a
+; version.json pointing at it). Those old updaters can only run it as
+; "/SILENT /SUPPRESSMSGBOXES /NORESTART", as the person using the old app,
+; who often isn't an administrator. So the handover installer:
+;   * installs just for that person (like the old apps), with no UAC prompt;
+;   * if Flooring Partners App is already installed (say IT deployed it),
+;     installs nothing and just opens the installed copy;
+;   * then opens the app, which copies the old apps' settings and removes
+;     the old apps.
 
 #define AppName        "Flooring Partners App"
 ; The name used up to 3.0.1, whose shortcuts are replaced on upgrade.
@@ -16,6 +28,8 @@
 ; Inno Setup AppIds of the separate apps this one replaces.
 #define OldQrAppId     "{0234F8BE-94D5-4A96-8387-A0CB5A5DAD1B}"
 #define OldVcAppId     "{AB4F23FC-7020-4D60-9CFC-3EB453F9A9BA}"
+; This program's own AppId (also in [Setup] below, written there with {{).
+#define NewAppId       "{87BB602F-B003-4EE3-9EB5-6B103697BEB2}"
 
 [Setup]
 ; AppId is the identity Windows uses to recognise an upgrade. NEVER change it
@@ -46,13 +60,23 @@ SignedUninstaller=yes
 ; UsePreviousPrivileges (default yes) means an existing install is upgraded in
 ; the mode it was installed in, so the in-app updater keeps a per-user copy
 ; per-user, with no UAC prompt.
+#ifdef Handover
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=commandline
+UsePreviousPrivileges=no
+#else
 PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog commandline
+#endif
 DefaultDirName={autopf}\{#AppPublisher}\Tools
 DisableProgramGroupPage=yes
 
 OutputDir=..\dist\installer
+#ifdef Handover
+OutputBaseFilename=FPTools-{#AppVersion}-handover
+#else
 OutputBaseFilename=FPTools-{#AppVersion}-setup
+#endif
 SetupIconFile=..\assets\fp.ico
 UninstallDisplayIcon={app}\{#AppExeName}
 UninstallDisplayName={#AppName}
@@ -296,6 +320,45 @@ begin
     RemoveOldApp(HKLM32, '{#OldVcAppId}');
   end;
 end;
+
+{ ---- Handover from the old apps ---- }
+
+#ifdef Handover
+{ Flooring Partners App's exe if it is already installed, for all users or
+  for this user; otherwise ''. }
+function InstalledAppExe: String;
+var
+  Key, Dir: String;
+begin
+  Result := '';
+  Key := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#NewAppId}_is1';
+  if RegQueryStringValue(HKLM64, Key, 'InstallLocation', Dir)
+    or RegQueryStringValue(HKLM32, Key, 'InstallLocation', Dir)
+    or RegQueryStringValue(HKCU, Key, 'InstallLocation', Dir) then
+  begin
+    Dir := AddBackslash(RemoveQuotes(Trim(Dir))) + '{#AppExeName}';
+    if FileExists(Dir) then
+      Result := Dir;
+  end;
+end;
+
+{ Already installed: don't add a second copy, just open the one that's there.
+  On first opening it copies the old apps' settings and removes them. }
+function InitializeSetup: Boolean;
+var
+  Exe: String;
+  ResultCode: Integer;
+begin
+  Result := True;
+  Exe := InstalledAppExe;
+  if Exe <> '' then
+  begin
+    Log('Already installed at ' + Exe + '; opening it instead of installing.');
+    Exec(Exe, '', '', SW_SHOWNORMAL, ewNoWait, ResultCode);
+    Result := False;
+  end;
+end;
+#endif
 
 function InstallScope(Param: String): String;
 begin

@@ -100,9 +100,10 @@ pub struct Settings {
     pub vc: VcSettings,
     pub last_page: Page,
     pub qr_kind: QrKind,
-    /// The user has already been asked whether to remove the old separate
-    /// apps, so the question is not repeated at every start.
-    pub old_apps_prompted: bool,
+    /// The old separate apps have been removed automatically (or, before
+    /// 3.0.3, the user was asked about it), so it is not done again at every
+    /// start. Stored under its original key, "old_apps_prompted".
+    pub old_apps_handled: bool,
 }
 
 impl Default for Settings {
@@ -112,7 +113,7 @@ impl Default for Settings {
             vc: VcSettings::default(),
             last_page: Page::Qr,
             qr_kind: QrKind::Url,
-            old_apps_prompted: false,
+            old_apps_handled: false,
         }
     }
 }
@@ -133,7 +134,7 @@ impl config_store::Settings for Settings {
             ("vc_filepath", s(&self.vc.filepath)),
             ("vc_overwrite", Value::Bool(self.vc.option_overwrite)),
             ("vc_open_folder", Value::Bool(self.vc.option_open_folder)),
-            ("old_apps_prompted", Value::Bool(self.old_apps_prompted)),
+            ("old_apps_prompted", Value::Bool(self.old_apps_handled)),
         ]
     }
 
@@ -160,7 +161,7 @@ impl config_store::Settings for Settings {
         take_string(stored, "vc_filepath", &mut vc.filepath);
         take_bool(stored, "vc_overwrite", &mut vc.option_overwrite);
         take_bool(stored, "vc_open_folder", &mut vc.option_open_folder);
-        take_bool(stored, "old_apps_prompted", &mut self.old_apps_prompted);
+        take_bool(stored, "old_apps_prompted", &mut self.old_apps_handled);
     }
 }
 
@@ -261,7 +262,7 @@ mod tests {
         let mut s = Settings { last_page: Page::Converter, qr_kind: QrKind::Contact, ..Default::default() };
         s.qr.saveto_name = "x".into();
         s.vc.option_overwrite = false;
-        s.old_apps_prompted = true;
+        s.old_apps_handled = true;
         let mut back = Settings::default();
         back.merge_from(&Value::Object(s.to_fields().into_iter().map(|(k, v)| (k.to_string(), v)).collect()));
         assert_eq!(back, s);

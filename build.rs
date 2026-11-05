@@ -72,7 +72,7 @@ BEGIN
       VALUE "FileDescription", "{description}"
       VALUE "FileVersion", "{version}"
       VALUE "InternalName", "{exe}"
-      VALUE "LegalCopyright", "Copyright (c) {company}"
+      VALUE "LegalCopyright", "Copyright (c) {company}. All rights reserved."
       VALUE "OriginalFilename", "{exe}.exe"
       VALUE "ProductName", "{product}"
       VALUE "ProductVersion", "{version}"

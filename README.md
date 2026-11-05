@@ -81,13 +81,25 @@ see or overwrite each other's settings:
 
 The old apps were installed separately by each person (per-user installs).
 
+- **The old apps update themselves into this one.** Their repositories
+  (`fp-qr-gen`, `fp-vc-converter`) publish a final "update" that points at
+  this app's *handover* installer (`FPTools-<version>-handover.exe`). When
+  someone clicks Yes in an old app's update prompt, it downloads that,
+  checks its SHA-256 and runs it. The handover installer installs just for
+  that person, like the old apps, with no administrator prompt. If
+  Flooring Partners App is already installed (for example, IT deployed it),
+  it installs nothing and opens the installed copy instead. Either way the
+  app then opens.
 - **Settings carry over.** The first time someone opens Flooring Partners
-  Tools, their QR save folder, file name, logo, options and chosen export file
+  App, their QR save folder, file name, logo, options and chosen export file
   are copied from the old apps' settings.
-- **Old apps are removed on request.** Right after that, the program offers
-  once to remove that person's copies of the old apps, by running their own
-  uninstallers. If they decline, **Settings → Old apps → Remove old apps**
-  does it later. Nothing is removed without asking.
+- **Then the old apps are removed.** Straight after copying the settings, the
+  app runs that person's old uninstallers silently and says what it removed.
+  If an old app is still open, it waits up to 30 seconds for it to close;
+  if it doesn't, it's removed the next time the app opens. **Settings → Old
+  apps → Remove old apps** is there too. (People who said No to the old
+  question in 3.0.0–3.0.2 aren't asked again; the Settings button still
+  works for them.)
 - **Copies installed for all users** (only possible if IT deployed the old
   apps machine-wide) are removed by this installer when it runs as
   administrator; it's the *Remove the separate … apps* option in Setup, on by
@@ -224,6 +236,15 @@ installer finishes, so nothing can swap it in between. For a machine-wide
 install, Windows asks for administrator approval. The program then reopens as
 the user who was using it, not as the administrator.
 
+## Changes in 3.0.3
+
+- The old QR Code Generator and VendorCafe CSV Converter can now update
+  themselves into Flooring Partners App (see *Moving from the two old apps*),
+  through a new per-user *handover* installer published with each release.
+- The old apps are removed automatically the first time someone opens the
+  app (after their settings are copied), instead of after a question.
+- The licence is now proprietary (see *Licence*).
+
 ## Changes in 3.0.2
 
 - Renamed from *Flooring Partners Tools* to **Flooring Partners App**: the
@@ -288,14 +309,19 @@ iscc build\installer.iss
 
 ## Licence
 
-Source code and documentation are released under the MIT Licence.
+Proprietary. Copyright (c) 2026 Flooring Partners. All rights reserved.
+Flooring Partners and the people it authorizes may use the app for Flooring
+Partners' business; anything else needs written permission. The source code
+being public on GitHub doesn't change that.
 
 The Flooring Partners name, logo and icon (`assets/fp_logo.png`,
 `assets/fp.ico`) are excluded and remain company property; no trademark rights
-are granted. If you fork this project, replace those files and change the
-constants in `src/app.rs` and `build.rs`.
+are granted.
 
-See [LICENSE.txt](LICENSE.txt) for both.
+The app includes open-source components (the Rust standard library, rustls,
+ring, webpki-roots and their dependencies) that stay under their own licences.
+
+See [LICENSE.txt](LICENSE.txt) for the full terms.
 
 ## AI disclosure
 

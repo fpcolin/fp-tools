@@ -346,7 +346,7 @@ pub fn command(id: u16, code: u16) {
             super::sync(PageId::Converter);
         }
         ID_CHECK_NOW => updates::check_now(),
-        ID_REMOVE_OLD => updates::remove_old_apps(),
+        ID_REMOVE_OLD => updates::remove_old_apps(false),
         _ => {}
     }
 }

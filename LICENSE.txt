@@ -1,24 +1,76 @@
-MIT License
+FLOORING PARTNERS PROPRIETARY SOFTWARE LICENSE
 
-Copyright (c) 2026 Flooring Partners
+Copyright (c) 2026 Flooring Partners. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This software, including its source code, compiled programs, installers,
+documentation and any updates (together, "the Software"), is owned by
+Flooring Partners and protected by copyright law. The Software is licensed,
+not sold.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+The source code being publicly visible does not place it in the public
+domain and does not grant any licence beyond the terms below. Viewing or
+forking this repository through GitHub's own features, as GitHub's Terms of
+Service allow for public repositories, does not give permission to use, copy,
+modify or distribute the Software in any other way.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+
+1. PERMITTED USE
+
+   Flooring Partners, and its employees, contractors and other people it
+   authorizes, may install and use the Software for Flooring Partners'
+   business purposes.
+
+   Anyone else needs the prior written permission of Flooring Partners to
+   use the Software.
+
+
+2. RESTRICTIONS
+
+   Except as permitted in section 1, or with the prior written permission of
+   Flooring Partners, you may not:
+
+     * copy the Software, except as needed to install, run and back it up
+       for permitted use;
+     * modify, adapt, translate, or create derivative works of the Software;
+     * distribute, publish, sublicense, sell, rent, lease, lend, or otherwise
+       make the Software available to anyone else;
+     * reverse engineer, decompile, or disassemble the Software, except to the
+       extent that applicable law expressly permits it despite this
+       restriction;
+     * remove or alter any copyright, trademark, or other notice in the
+       Software.
+
+
+3. THIRD-PARTY COMPONENTS
+
+   The Software includes open-source components, among them the Rust standard
+   library, rustls, ring, webpki-roots, and their dependencies. Each of those
+   components remains under its own licence, which can be found with the
+   component's source code. Nothing in this licence limits the rights those
+   licences give you in those components.
+
+
+4. NO WARRANTY
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+
+5. LIMITATION OF LIABILITY
+
+   TO THE FULLEST EXTENT PERMITTED BY LAW, IN NO EVENT SHALL FLOORING PARTNERS
+   OR THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+   IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+   CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+
+6. TERMINATION
+
+   Permission to use the Software ends automatically if you break these
+   terms, or when Flooring Partners withdraws it (for example, when your work
+   for Flooring Partners ends). You must then stop using the Software and
+   delete any copies you have.
 
 
 ---
@@ -26,10 +78,10 @@ SOFTWARE.
 
 TRADEMARKS AND BRANDING
 
-The MIT License above applies to the source code and documentation in this
-repository. It does not apply to the Flooring Partners name, marks, or brand
-assets, which are excluded from the definition of "the Software" for the
-purposes of that licence. Specifically excluded are:
+This licence applies to the source code and documentation in this repository.
+It does not apply to the Flooring Partners name, marks, or brand assets, which
+are excluded from the definition of "the Software" for the purposes of this
+licence. Specifically excluded are:
 
   * The name "Flooring Partners" and any confusingly similar name.
   * The Flooring Partners logo and icon, including but not limited to the
@@ -37,16 +89,16 @@ purposes of that licence. Specifically excluded are:
   * Any other Flooring Partners logo, wordmark, trade dress, or design mark
     appearing in this repository or in binaries built from it.
 
-No trademark rights are granted by the MIT License, whether expressly, by
+No trademark rights are granted by this licence, whether expressly, by
 implication, or by estoppel. Nothing in this file grants permission to use
 these marks to identify, endorse, or promote any product or service.
 
-If you fork or reuse this code, replace the excluded brand assets with your
-own and remove Flooring Partners branding from the application name, window
-titles, installer metadata, and any published builds. The code is written so
-these can be swapped by replacing the files named above and editing the vendor
-and name constants in src/app.rs and build.rs.
+If Flooring Partners permits you to fork or reuse this code, replace the
+excluded brand assets with your own and remove Flooring Partners branding from
+the application name, window titles, installer metadata, and any published
+builds. The code is written so these can be swapped by replacing the files
+named above and editing the vendor and name constants in src/app.rs and
+build.rs.
 
 Nominative use of the Flooring Partners name to accurately describe the origin
-of this code (for example, "forked from Flooring Partners Tools")
-is permitted.
+of this code (for example, "forked from Flooring Partners App") is permitted.

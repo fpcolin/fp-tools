@@ -91,7 +91,12 @@ pub enum Banner {
 /// What background threads report back.
 pub enum Event {
     Update(updates::UpdateEvent),
-    OldAppsRemoved(Vec<(&'static str, Result<bool, String>)>),
+    /// Old apps' uninstallers have run; `automatic` = started at first run
+    /// rather than from the Settings button.
+    OldAppsRemoved {
+        results: Vec<(&'static str, updates::Removal)>,
+        automatic: bool,
+    },
 }
 
 pub struct Model {
@@ -880,7 +885,7 @@ fn main_message(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> Option<LRESULT> {
             while let Some(event) = with(|m| m.inbox.try_recv().ok()).flatten() {
                 match event {
                     Event::Update(e) => updates::on_event(e),
-                    Event::OldAppsRemoved(results) => updates::old_apps_removed(results),
+                    Event::OldAppsRemoved { results, automatic } => updates::old_apps_removed(results, automatic),
                 }
             }
             Some(0)

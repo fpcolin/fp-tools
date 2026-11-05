@@ -189,10 +189,15 @@ jobs:
           }
           & $iscc @isccArgs build\installer.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+          # The handover installer, for the old apps' updaters (see installer.iss).
+          & $iscc @isccArgs /DHandover build\installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC (handover) failed with exit code $LASTEXITCODE" }
 
           if ($env:SIGNING -eq 'true') {
-            & $env:SIGNTOOL verify /pa /v "dist\installer\$env:APP_EXE-$env:VERSION-setup.exe"
-            if ($LASTEXITCODE -ne 0) { throw "The installer signature did not verify." }
+            foreach ($kind in 'setup', 'handover') {
+              & $env:SIGNTOOL verify /pa /v "dist\installer\$env:APP_EXE-$env:VERSION-$kind.exe"
+              if ($LASTEXITCODE -ne 0) { throw "The $kind installer signature did not verify." }
+            }
           }
 
       - name: Remove signing certificate
@@ -216,6 +221,7 @@ jobs:
           name: release
           path: |
             dist/installer/*-setup.exe
+            dist/installer/*-handover.exe
             dist/installer/version.json
           if-no-files-found: error
           retention-days: 7
@@ -242,5 +248,5 @@ jobs:
           set -euo pipefail
           draft="--draft"
           if [ "${AUTO_PUBLISH:-}" = "true" ]; then draft=""; fi
-          gh release create "$TAG" release/*-setup.exe release/version.json \
+          gh release create "$TAG" release/*-setup.exe release/*-handover.exe release/version.json \
             --title "$APP_TITLE ${TAG#v}" --generate-notes $draft

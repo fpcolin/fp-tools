@@ -170,6 +170,28 @@ Settings survive version bumps. They are reset only when `config_schema` in
 `src/app.rs` changes. Bump it only when the shape of `config.json` changes
 (renaming or removing a key, or changing what a value means).
 
+## Handover from the old apps
+
+Each release also builds `FPTools-<version>-handover.exe`
+(`iscc /DHandover build\installer.iss`): the same program with
+`PrivilegesRequired=lowest`, for the old Python apps' updaters, which can only
+run an installer as `/SILENT /SUPPRESSMSGBOXES /NORESTART` as the person using
+them. See the comments at the top of `installer.iss`.
+
+The old repositories point their updaters at it: in `fp-qr-gen` and
+`fp-vc-converter`, run the **Handover to Flooring Partners App** workflow
+(Actions tab → the workflow → Run workflow) with this app's version, e.g.
+`3.0.3`. It downloads that version's handover installer from this repo's
+release, records its SHA-256 in a `version.json`, and publishes it as the
+old repo's latest release. Old apps offer it at their next start. Run it
+once; the old apps then hand over to that version, and the installed app keeps
+itself up to date from here. Run it again only to point the old apps at a
+newer version, for example if the handover installer itself had a problem.
+
+The old updaters accept any HTTPS address with a matching SHA-256, so nothing
+in the old apps has to change. Keep the old repositories public with that
+release as their latest, for as long as old copies may still be around.
+
 ## How updates work
 
 The manifest format is unchanged from version 2, so installed Python copies can

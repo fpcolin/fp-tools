@@ -2,11 +2,11 @@
 name = "fp-tools"
 # Single source of truth for the version: the exe's file properties, the
 # installer and the release tag are all derived from this.
-version = "3.0.2"
+version = "3.0.3"
 edition = "2024"
 rust-version = "1.85"
 description = "Flooring Partners App: QR codes and the VendorCafe CSV converter"
-license = "MIT"
+license-file = "LICENSE.txt"
 publish = false
 build = "build.rs"
 

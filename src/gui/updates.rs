@@ -406,36 +406,36 @@ pub fn checks_text(m: &Model) -> String {
     }
 }
 
-/// Once the window is up: find the old separate apps and, the first time,
-/// offer to remove this user's copies.
+/// How removing one old app went.
+pub enum Removal {
+    Removed,
+    /// Its uninstaller ran but the app is still registered.
+    Unfinished,
+    /// It was open and didn't close within the wait; try again later.
+    StillOpen,
+    Failed(String),
+}
+
+fn names_text(names: &[&str]) -> String {
+    let apps = if names.len() > 1 { "apps" } else { "app" };
+    format!("{} {apps}", names.join(" and "))
+}
+
+/// Once the window is up: find the old separate apps and, the first time
+/// this user opens the program, remove their copies. Their settings were
+/// already copied when the settings were loaded at start-up.
 pub fn check_old_apps() {
     let found = crate::old_apps::find();
-    let ask = !found.is_empty()
-        && found.iter().any(|a| a.removable())
-        && !with(|m| m.config.get().old_apps_prompted).unwrap_or(true);
-    with(|m| m.old_apps = found.clone());
+    let due = found.iter().any(|a| a.removable()) && !with(|m| m.config.get().old_apps_handled).unwrap_or(true);
+    with(|m| m.old_apps = found);
     super::relayout(PageId::Settings);
-    if !ask {
-        return;
-    }
-    super::update_settings(|s| s.old_apps_prompted = true);
-    let names: Vec<&str> = found.iter().filter(|a| a.removable()).map(|a| a.name).collect();
-    let question = format!(
-        "{} replaces the separate {} app{}. Your settings from {} have been copied here.\n\n\
-         Remove the old app{} now?",
-        crate::app::DISPLAY_NAME,
-        names.join(" and "),
-        if names.len() > 1 { "s" } else { "" },
-        if names.len() > 1 { "them" } else { "it" },
-        if names.len() > 1 { "s" } else { "" },
-    );
-    if message(&question, MB_YESNO | MB_ICONQUESTION) == IDYES {
-        remove_old_apps();
+    if due {
+        remove_old_apps(true);
     }
 }
 
 /// Run the old apps' uninstallers (this user's copies) in the background.
-pub fn remove_old_apps() {
+pub fn remove_old_apps(automatic: bool) {
     let Some((apps, events)) = with(|m| {
         if m.removing_old_apps {
             return None;
@@ -449,36 +449,89 @@ pub fn remove_old_apps() {
     super::sync(PageId::Settings);
     let main = super::main_handle();
     std::thread::spawn(move || {
-        let results =
-            apps.iter().map(|a| (a.name, crate::old_apps::remove(a).map_err(|e| e.to_string()))).collect::<Vec<_>>();
-        post(&events, main, Event::OldAppsRemoved(results));
+        let results = apps
+            .iter()
+            .map(|a| {
+                let outcome = match crate::old_apps::remove(a) {
+                    Ok(true) => Removal::Removed,
+                    Ok(false) => Removal::Unfinished,
+                    Err(e) if e.kind() == std::io::ErrorKind::ResourceBusy => Removal::StillOpen,
+                    Err(e) => Removal::Failed(e.to_string()),
+                };
+                (a.name, outcome)
+            })
+            .collect::<Vec<_>>();
+        post(&events, main, Event::OldAppsRemoved { results, automatic });
     });
 }
 
-pub fn old_apps_removed(results: Vec<(&'static str, Result<bool, String>)>) {
+pub fn old_apps_removed(results: Vec<(&'static str, Removal)>, automatic: bool) {
     let found = crate::old_apps::find();
     with(|m| {
         m.removing_old_apps = false;
         m.old_apps = found;
     });
-    super::sync(PageId::Settings);
+    let removed: Vec<&str> =
+        results.iter().filter(|(_, r)| matches!(r, Removal::Removed)).map(|(name, _)| *name).collect();
+    let open: Vec<&str> =
+        results.iter().filter(|(_, r)| matches!(r, Removal::StillOpen)).map(|(name, _)| *name).collect();
     let failed: Vec<String> = results
         .iter()
         .filter_map(|(name, r)| match r {
-            Ok(true) => None,
-            Ok(false) => Some(format!("{name}: its uninstaller did not finish.")),
-            Err(e) => Some(format!("{name}: {e}")),
+            Removal::Unfinished => Some(format!("{name}: its uninstaller did not finish.")),
+            Removal::Failed(e) => Some(format!("{name}: {e}")),
+            _ => None,
         })
         .collect();
-    if failed.is_empty() {
-        message("The old apps have been removed.", MB_ICONINFORMATION);
-    } else {
-        message(
-            &format!(
-                "Some old apps could not be removed:\n\n{}\n\nYou can remove them in Windows Settings > Apps.",
-                failed.join("\n")
-            ),
-            MB_ICONWARNING,
-        );
+    // An app that was still open is retried at the next start; anything
+    // else is done (or for the user to finish in Settings).
+    if open.is_empty() {
+        super::update_settings(|s| s.old_apps_handled = true);
+    }
+    super::sync(PageId::Settings);
+
+    let mut text = String::new();
+    if !removed.is_empty() {
+        text.push_str(&if automatic {
+            format!(
+                "{} replaces the separate {}. Your settings were copied over and the old {} been removed.",
+                crate::app::DISPLAY_NAME,
+                names_text(&removed),
+                if removed.len() > 1 { "apps have" } else { "app has" },
+            )
+        } else {
+            format!(
+                "The separate {} {} been removed.",
+                names_text(&removed),
+                if removed.len() > 1 { "have" } else { "has" }
+            )
+        });
+    }
+    if !open.is_empty() {
+        if !text.is_empty() {
+            text.push_str("\n\n");
+        }
+        text.push_str(&format!(
+            "The {} {} still open, so {} couldn't be removed yet. Close {}; {} removed the next time you open {}.",
+            names_text(&open),
+            if open.len() > 1 { "are" } else { "is" },
+            if open.len() > 1 { "they" } else { "it" },
+            if open.len() > 1 { "them" } else { "it" },
+            if open.len() > 1 { "they'll be" } else { "it'll be" },
+            crate::app::DISPLAY_NAME,
+        ));
+    }
+    if !failed.is_empty() {
+        if !text.is_empty() {
+            text.push_str("\n\n");
+        }
+        text.push_str(&format!(
+            "Some old apps could not be removed:\n\n{}\n\nYou can remove them in Windows Settings > Apps.",
+            failed.join("\n")
+        ));
+    }
+    if !text.is_empty() {
+        let icon = if failed.is_empty() && open.is_empty() { MB_ICONINFORMATION } else { MB_ICONWARNING };
+        message(&text, icon);
     }
 }
