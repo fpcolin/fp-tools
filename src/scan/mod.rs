@@ -7,6 +7,7 @@
 //! what is a number or date ([`values`]), and write the workbook ([`xlsx`]).
 
 pub mod ccitt;
+pub mod columns;
 pub mod gray;
 pub mod input;
 pub mod ocr;
@@ -204,7 +205,22 @@ pub fn read_page(page: Gray, cancel: &AtomicBool) -> Result<PageTable, ScanError
     let dashes = find_dashes(&blobs, &words, th);
     words.extend(dashes.iter().filter(|d| !d.in_word).map(|d| d.at));
     check(cancel)?;
-    let layout = table::layout(&words, &h_rules, &v_rules, th);
+    let pitch = fixed_pitch(&blobs, th);
+    // Dash-shaped marks, which may underline column headings.
+    let dash_marks: Vec<Bounds> = blobs
+        .iter()
+        .filter(|b| {
+            let (w, h) = (b.width() as f32, b.height() as f32);
+            h <= th * 0.35 && w >= h * 1.5 && w >= th * 0.2 && w <= th * 1.2
+        })
+        .map(|b| Bounds {
+            left: b.left as f32,
+            top: b.top as f32,
+            right: (b.right + 1) as f32,
+            bottom: (b.bottom + 1) as f32,
+        })
+        .collect();
+    let layout = table::layout(&words, &h_rules, &v_rules, &dash_marks, Some(&clean), pitch, th);
 
     // Read every line of every cell in one go (the engine batches them).
     let pad = th * 0.15;
@@ -224,9 +240,9 @@ pub fn read_page(page: Gray, cancel: &AtomicBool) -> Result<PageTable, ScanError
     check(cancel)?;
 
     let mut texts = texts.into_iter();
-    let mut cells: Vec<(table::Cell, String)> = Vec::new();
+    let mut cells: Vec<columns::Read> = Vec::new();
     for cell in layout.cells {
-        let text = cell
+        let lines: Vec<Vec<(char, f32)>> = cell
             .lines
             .iter()
             .filter_map(|line| {
@@ -234,12 +250,62 @@ pub fn read_page(page: Gray, cancel: &AtomicBool) -> Result<PageTable, ScanError
                 let inside: Vec<&Dash> = dashes.iter().filter(|d| line_has(line, &d.at)).collect();
                 Some(with_dashes(chars, &inside))
             })
+            .collect();
+        let text = lines
+            .iter()
+            .map(|l| l.iter().map(|c| c.0).collect::<String>())
             .filter(|t| !t.is_empty())
             .collect::<Vec<_>>()
             .join(" ");
-        cells.push((cell, text));
+        let (chars, span) = match (lines.as_slice(), cell.lines.as_slice()) {
+            ([one], [b]) if !one.is_empty() => (one.clone(), Some((b.left, b.right))),
+            _ => (Vec::new(), None),
+        };
+        cells.push(columns::Read { cell, text, chars, span });
     }
-    Ok(typed(layout.rows, layout.cols, cells))
+    let mut cols = layout.cols;
+    columns::split(&mut cells, &mut cols);
+    columns::repair(&mut cells);
+    let cells = cells.into_iter().map(|r| (r.cell, r.text)).collect();
+    Ok(typed(layout.rows, cols, cells))
+}
+
+/// The character pitch of a typewriter-style (fixed-pitch) page, if it is
+/// one: characters' centres along a line are then whole numbers of
+/// characters apart, across spaces too.
+fn fixed_pitch(blobs: &[prep::Blob], th: f32) -> Option<f32> {
+    let mut chars: Vec<(f32, f32)> = blobs
+        .iter()
+        .filter(|b| {
+            let (w, h) = (b.width() as f32, b.height() as f32);
+            h >= th * 0.6 && h <= th * 1.6 && w <= th * 1.2
+        })
+        .map(|b| ((b.left + b.right) as f32 / 2.0, (b.top + b.bottom) as f32 / 2.0))
+        .collect();
+    chars.sort_by(|a, b| a.1.total_cmp(&b.1));
+    let mut lines: Vec<Vec<f32>> = Vec::new();
+    let mut last_y = f32::MIN;
+    for (x, y) in chars {
+        if y - last_y > th * 0.4 || lines.is_empty() {
+            lines.push(Vec::new());
+        }
+        last_y = y;
+        lines.last_mut().expect("just added").push(x);
+    }
+    let mut steps: Vec<f32> = Vec::new();
+    for mut l in lines {
+        l.sort_by(f32::total_cmp);
+        steps.extend(l.windows(2).map(|w| w[1] - w[0]).filter(|&d| d > th * 0.2 && d < th * 6.0));
+    }
+    let mut near: Vec<f32> = steps.iter().copied().filter(|&d| d >= th * 0.3 && d <= th * 1.5).collect();
+    if near.len() < 60 {
+        return None;
+    }
+    near.sort_by(f32::total_cmp);
+    let p = near[near.len() / 2];
+    let within: Vec<f32> = steps.iter().copied().filter(|&d| d < p * 4.5).collect();
+    let on_grid = within.iter().filter(|&&d| (d / p - (d / p).round()).abs() < 0.15).count();
+    (on_grid * 100 >= within.len() * 85).then_some(p)
 }
 
 /// Letter-sized marks outside every detected word, grouped into words.
@@ -387,8 +453,9 @@ fn line_has(line: &Bounds, d: &Bounds) -> bool {
     cx >= line.left && cx <= line.right && cy >= line.top && cy <= line.bottom
 }
 
-/// A line's text, putting back any dash the recogniser left out.
-fn with_dashes(chars: Vec<(char, f32)>, dashes: &[&Dash]) -> String {
+/// A line's characters (and where each starts), putting back any dash the
+/// recogniser left out; spaces are single and none at either end.
+fn with_dashes(chars: Vec<(char, f32)>, dashes: &[&Dash]) -> Vec<(char, f32)> {
     let mut chars = chars;
     for d in dashes {
         let (cx, _) = d.at.center();
@@ -404,8 +471,18 @@ fn with_dashes(chars: Vec<(char, f32)>, dashes: &[&Dash]) -> String {
             chars.insert(at, ('-', cx));
         }
     }
-    let text: String = chars.into_iter().map(|(c, _)| c).collect();
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    let mut out: Vec<(char, f32)> = Vec::with_capacity(chars.len());
+    for (c, x) in chars {
+        let c = if c.is_whitespace() { ' ' } else { c };
+        if c == ' ' && out.last().is_none_or(|l| l.0 == ' ') {
+            continue;
+        }
+        out.push((c, x));
+    }
+    if out.last().is_some_and(|l| l.0 == ' ') {
+        out.pop();
+    }
+    out
 }
 
 /// Shrink a detected word box to the ink inside it; None if it has none
@@ -437,20 +514,24 @@ fn tighten(b: &prep::Binary, w: &Bounds, th: f32) -> Option<Bounds> {
 /// Decide each cell's value. In columns that are mostly numbers, letters
 /// that look like digits are read as digits.
 fn typed(rows: usize, cols: usize, cells: Vec<(table::Cell, String)>) -> PageTable {
-    let mut numeric = vec![(0usize, 0usize); cols];
+    // Per table and column: (numbers, values).
+    let mut numeric: std::collections::HashMap<(usize, usize), (usize, usize)> = Default::default();
     for (c, text) in &cells {
+        let Some(block) = c.block else { continue };
         if text.is_empty() || c.cols > 1 {
             continue;
         }
-        numeric[c.col].1 += 1;
+        let e = numeric.entry((block, c.col)).or_default();
+        e.1 += 1;
         if matches!(values::parse(text), Value::Number(..)) {
-            numeric[c.col].0 += 1;
+            e.0 += 1;
         }
     }
+    let cols = cells.iter().map(|(c, _)| c.col + c.cols).max().unwrap_or(0).max(cols);
     let out = cells
         .into_iter()
         .map(|(c, text)| {
-            let (nums, all) = numeric[c.col];
+            let (nums, all) = c.block.and_then(|b| numeric.get(&(b, c.col)).copied()).unwrap_or((0, 0));
             let value = if text.is_empty() {
                 None
             } else if c.cols == 1 && all >= 3 && nums * 10 >= all * 6 {

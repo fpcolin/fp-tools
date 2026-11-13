@@ -85,3 +85,36 @@ fn refuses_other_files() {
     assert!(err.to_string().contains("isn't a scan"), "{err}");
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// A typewriter-style packing list (fixed-pitch type, black and white,
+/// 300 dpi): columns come from the dashes under the headings, the
+/// width/length column is split into width, "x" and length, and feet and
+/// inches are read whole.
+#[test]
+fn reads_a_fixed_pitch_packing_list() {
+    let page = read("scan-packing-list.tif");
+    let row_of = |item: &str| {
+        let r = page
+            .cells
+            .iter()
+            .find(|c| c.value == Some(text(item)))
+            .unwrap_or_else(|| panic!("{item} not found: {page:#?}"))
+            .row;
+        let mut cells: Vec<_> = page.cells.iter().filter(|c| c.row == r).collect();
+        cells.sort_by_key(|c| c.col);
+        cells.into_iter().map(|c| c.text()).collect::<Vec<_>>()
+    };
+    let heading = row_of("ITEM");
+    assert_eq!(heading[..2], ["ITEM", "ROLL NO."]);
+    for (item, roll, length, weight) in [
+        ("A5000", "3100542393", "170'03", "573"),
+        ("A5005", "3100469013", "90'01", "572"),
+        ("A5009", "3100542820", "111'09", "780"),
+    ] {
+        let row = row_of(item);
+        assert_eq!(row[1], roll, "{row:?}");
+        let x = row.iter().position(|t| t == "x").unwrap_or_else(|| panic!("{row:?}"));
+        assert_eq!((row[x - 1].as_str(), row[x + 1].as_str()), ("12'00", length), "{row:?}");
+        assert_eq!(row[row.len() - 1], weight, "{row:?}");
+    }
+}

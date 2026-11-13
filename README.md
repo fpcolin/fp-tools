@@ -73,6 +73,13 @@ like, opens it in Excel. A scan can also be dropped on the program's icon.
   only**, and **tables without lines**, are split into columns where the text
   lines up. Text above, below and around tables (titles, addresses, totals)
   goes into rows of its own, under the columns it sits over.
+- **Typewriter-style printouts** (bills of lading, packing lists and other
+  ERP printouts in fixed-pitch type): the dashes or lines under the column
+  headings give the columns, a column whose every row has the same layout
+  is split (`12'00 x 179'02` becomes width, `x` and length), and values that
+  share a shape down a column are made consistent (a length read as `17008`
+  or `12"00` among `170'08` and `12'00` is corrected to the shape, using the
+  printed width to tell `18'05` from `181'05`).
 - **Values**: numbers, amounts (`$1,234.50`, `(45.00)`, `45.00-`),
   percentages and US dates become real numbers and dates, formatted as they
   were printed. Codes with leading zeros (`00123`) and long account numbers
@@ -277,6 +284,18 @@ saved in the user's own profile and stays locked from the checksum until the
 installer finishes, so nothing can swap it in between. For a machine-wide
 install, Windows asks for administrator approval. The program then reopens as
 the user who was using it, not as the administrator.
+
+## Changes in 3.1.1
+
+- Scan to Excel reads typewriter-style printouts such as bills of lading
+  much better: columns come from the dashes under the headings, combined
+  columns (`12'00 x 179'02`) are split, and feet-and-inches values are
+  corrected to their column's shape. On a sample bill of lading, every field
+  of every roll now matches the scanner's own scan-to-Excel output.
+- Text around tables, and spaced-out headings ("B I L L  O F  L A D I N G"),
+  stay in one cell.
+- Fixes for the automatic checks on GitHub: newer code-style rules, and a
+  network test that assumed Linux timing.
 
 ## Changes in 3.1.0
 

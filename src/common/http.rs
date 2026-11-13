@@ -1123,9 +1123,14 @@ mod tests {
 
     #[test]
     fn connect_reports_failure_when_nothing_answers() {
-        // A port nobody listens on: refused at once, not a timeout.
+        // A port nobody listens on: refused, reported as a connection error
+        // rather than a timeout. Linux refuses at once; Windows retries a
+        // refused connection for about 2 seconds before giving up, so the
+        // limit here is well above that.
         let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
-        let result = connect_any(vec![free], Instant::now() + Duration::from_secs(5), Duration::from_secs(2));
-        assert!(matches!(result, Err(HttpError::Connect(_))), "{:?}", result.err());
+        let started = Instant::now();
+        let result = connect_any(vec![free], Instant::now() + Duration::from_secs(10), Duration::from_secs(6));
+        assert!(matches!(result, Err(HttpError::Connect(_))), "{:?} after {:?}", result.err(), started.elapsed());
+        assert!(started.elapsed() < Duration::from_secs(6), "took {:?}", started.elapsed());
     }
 }

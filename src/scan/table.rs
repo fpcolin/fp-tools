@@ -1,18 +1,21 @@
 //! Working out a page's rows and columns from where its words are and the
 //! ruled lines between them.
 //!
-//! Three kinds of table are recognised:
+//! Four kinds of table are recognised:
 //! * ruled grids (lines between rows and columns), whose cells come straight
 //!   from the lines, including cells that span several rows or columns;
 //! * lined tables (lines between rows only), whose columns are worked out
 //!   from how the words line up;
-//! * tables without lines, likewise.
+//! * printouts whose column headings are underlined with separate dashes or
+//!   lines ("ORDER/LINE ROLL NO." over "----------- ------------"), as ERP
+//!   and accounting systems print them: the underlines give the columns;
+//! * tables without lines, whose columns come from how the words line up.
 //!
 //! Everything else on the page (titles, addresses, notes) becomes rows too,
 //! with each phrase placed in the column it sits over.
 
 use super::ocr::Bounds;
-use super::prep::Rule;
+use super::prep::{Binary, Rule};
 
 /// One cell of the output sheet and where its text is on the page.
 #[derive(Clone, Debug, PartialEq)]
@@ -26,6 +29,10 @@ pub struct Cell {
     pub lines: Vec<Bounds>,
     /// Part of a ruled grid: drawn with borders in the sheet.
     pub boxed: bool,
+    /// Which table the cell belongs to (the page itself when it has no
+    /// tables); None for text around tables. Tidying a column only looks
+    /// at cells of one table.
+    pub block: Option<usize>,
 }
 
 /// A page laid out as a sheet.
@@ -34,20 +41,44 @@ pub struct Layout {
     pub cells: Vec<Cell>,
     pub rows: usize,
     pub cols: usize,
+    /// The block cells are being added for.
+    block: Option<usize>,
 }
 
 /// Lay out a page: `words` are tight boxes around the words, `h`/`v` the
-/// ruled lines, `th` the typical text height in pixels.
-pub fn layout(words: &[Bounds], h: &[Rule], v: &[Rule], th: f32) -> Layout {
+/// ruled lines, `dashes` the dash-shaped marks on the page (which may be
+/// column underlines), `th` the typical text height in pixels.
+#[allow(clippy::too_many_arguments)]
+pub fn layout(
+    words: &[Bounds],
+    h: &[Rule],
+    v: &[Rule],
+    dashes: &[Bounds],
+    ink: Option<&Binary>,
+    pitch: Option<f32>,
+    th: f32,
+) -> Layout {
     let tol = (th * 0.5).max(6.0);
+    let (gap, free_gap) = word_gap(&text_lines(words), pitch, th);
     let mut tables = find_grids(h, v, tol, th);
     tables.extend(find_lined(h, &tables, tol, th));
+    let (rulers, separators) = find_rulers(h, dashes, &tables, th);
+    // Words on an underline row are the dashes themselves.
+    let on_ruler = |w: &Bounds| {
+        let (cx, cy) = w.center();
+        rulers
+            .iter()
+            .chain(&separators)
+            .any(|r| (cy - r.y).abs() < th * 0.5 && cx >= r.runs[0].0 - th && cx <= r.runs[r.runs.len() - 1].1 + th)
+    };
+    let words: Vec<Bounds> = words.iter().copied().filter(|w| !on_ruler(w)).collect();
+    tables.extend(ruler_tables(&rulers, &text_lines(&words), &tables, th));
     tables.sort_by(|a, b| a.region.top.total_cmp(&b.region.top));
 
     // Words belong to the table they sit in.
     let mut table_words: Vec<Vec<Bounds>> = vec![Vec::new(); tables.len()];
     let mut free: Vec<Bounds> = Vec::new();
-    for w in words {
+    for w in &words {
         let (cx, cy) = w.center();
         match tables.iter().position(|t| contains(&t.region, cx, cy)) {
             Some(i) => table_words[i].push(*w),
@@ -57,13 +88,13 @@ pub fn layout(words: &[Bounds], h: &[Rule], v: &[Rule], th: f32) -> Layout {
 
     // Columns for lined tables, and for the text outside tables.
     for (t, tw) in tables.iter_mut().zip(&table_words) {
-        if t.cuts.is_empty() {
+        if t.cuts.is_empty() && t.grid.is_none() {
             let lines = text_lines(tw);
-            t.cuts = infer_cuts(&lines, th);
+            t.cuts = infer_cuts(&lines, th, gap);
         }
     }
     let free_lines = text_lines(&free);
-    let page_cuts = if tables.is_empty() { infer_cuts(&free_lines, th) } else { Vec::new() };
+    let page_cuts = if tables.is_empty() { infer_cuts(&free_lines, th, gap) } else { Vec::new() };
 
     // Blocks in reading order: each free line, and each table.
     enum Block<'a> {
@@ -78,21 +109,40 @@ pub fn layout(words: &[Bounds], h: &[Rule], v: &[Rule], th: f32) -> Layout {
     for (_, block) in blocks {
         match block {
             Block::Line(words) => {
+                out.block = if tables.is_empty() { Some(0) } else { None };
                 // Use the columns of the nearest table, if any.
                 let y = line_top(words);
                 let nearest =
                     tables.iter().min_by(|a, b| distance_y(&a.region, y).total_cmp(&distance_y(&b.region, y)));
                 let cuts = nearest.map_or(&page_cuts, |t| &t.cuts);
                 let row = out.rows;
-                place_line(&mut out, row, words, cuts, th, nearest.is_some());
+                // Text around a table keeps its phrases together.
+                let g = if nearest.is_some() { free_gap } else { gap };
+                let how = if nearest.is_some() { Place::AroundTable } else { Place::Columns };
+                place_line(&mut out, row, words, cuts, th, g, how);
                 out.rows += 1;
             }
             Block::Table(i) => {
+                out.block = Some(i);
                 let t = &tables[i];
                 let first_row = out.rows;
                 match &t.grid {
                     Some(grid) => place_grid(&mut out, first_row, grid, &table_words[i], th),
-                    None => place_lined(&mut out, first_row, t, &table_words[i], th),
+                    None if t.row_cuts.is_empty() => {
+                        // Underlined columns: a row per line of text. A word
+                        // the detector ran across a column edge is split
+                        // where the ink has a gap ("DYELOT: 2638043").
+                        for line in text_lines(&table_words[i]) {
+                            let line: Vec<Bounds> = match ink {
+                                Some(b) => line.iter().flat_map(|w| split_at_cuts(b, w, &t.cuts, th)).collect(),
+                                None => line,
+                            };
+                            let row = out.rows;
+                            place_line(&mut out, row, &line, &t.cuts, th, gap, Place::Strict);
+                            out.rows += 1;
+                        }
+                    }
+                    None => place_lined(&mut out, first_row, t, &table_words[i], th, gap),
                 }
             }
         }
@@ -107,8 +157,17 @@ struct Table {
     cuts: Vec<f32>,
     /// For a ruled grid; None for a lined table.
     grid: Option<Grid>,
-    /// For a lined table: row boundaries.
+    /// For a lined table: row boundaries. Empty for underlined columns,
+    /// whose rows are its lines of text.
     row_cuts: Vec<f32>,
+}
+
+/// A row of separate underlines (or one long line, a separator).
+#[derive(Clone, Debug)]
+struct Ruler {
+    y: f32,
+    /// Left to right.
+    runs: Vec<(f32, f32)>,
 }
 
 struct Grid {
@@ -356,6 +415,169 @@ fn find_lined(h: &[Rule], grids: &[Table], tol: f32, th: f32) -> Vec<Table> {
     out
 }
 
+/// The gap between words that separates phrases (and so, possibly,
+/// columns), for tables and for the text around them.
+///
+/// Ordinary type has narrow spaces, well under the text height. On a
+/// typewriter-style page (characters `pitch` apart) a single space leaves a
+/// gap of one to two characters' width and columns are two or more spaces
+/// apart; headings are often spaced out ("B I L L  O F  L A D I N G",
+/// "PAGE:  1"), so text around tables only splits at three or more spaces.
+fn word_gap(lines: &[Vec<Bounds>], pitch: Option<f32>, th: f32) -> (f32, f32) {
+    let ordinary = (0.8 * th, 0.8 * th);
+    let Some(p) = pitch else { return ordinary };
+    let mut single: Vec<f32> = lines
+        .iter()
+        .flat_map(|l| l.windows(2).map(|w| w[1].left - w[0].right))
+        .filter(|&g| g >= p * 0.8 && g <= p * 1.85)
+        .collect();
+    if single.len() < 5 {
+        return ordinary;
+    }
+    single.sort_by(f32::total_cmp);
+    let space = single[single.len() / 2];
+    (space + 0.5 * p, space + 1.5 * p)
+}
+
+/// Split a word box that crosses column edges at a clear gap in its ink
+/// near each edge; boxes are tightened to their ink.
+fn split_at_cuts(ink: &Binary, w: &Bounds, cuts: &[f32], th: f32) -> Vec<Bounds> {
+    let mut pieces = vec![*w];
+    for &cut in cuts {
+        let Some(last) = pieces.last().copied() else { break };
+        if cut - last.left < th * 0.3 || last.right - cut < th * 0.3 {
+            continue;
+        }
+        let (y0, y1) = (last.top.max(0.0) as usize, (last.bottom as usize).min(ink.height));
+        let blank = |x: usize| (y0..y1).all(|y| !ink.at(x, y));
+        // The blank column nearest the edge, within a character or so.
+        let reach = th as usize + 2;
+        let c = cut.round().max(0.0) as usize;
+        let found = (0..=reach).find_map(|d| {
+            [c.checked_sub(d), Some(c + d)]
+                .into_iter()
+                .flatten()
+                .find(|&x| (x as f32) > last.left + 1.0 && (x as f32) < last.right - 1.0 && x < ink.width && blank(x))
+        });
+        let Some(x) = found else { continue };
+        let left = tighten(ink, &Bounds { right: x as f32, ..last });
+        let right = tighten(ink, &Bounds { left: x as f32 + 1.0, ..last });
+        if let (Some(l), Some(r)) = (left, right) {
+            pieces.pop();
+            pieces.push(l);
+            pieces.push(r);
+        }
+    }
+    pieces
+}
+
+/// The box around the ink inside `b`, if any.
+fn tighten(ink: &Binary, b: &Bounds) -> Option<Bounds> {
+    let (x0, y0) = (b.left.max(0.0) as usize, b.top.max(0.0) as usize);
+    let (x1, y1) = ((b.right.max(0.0) as usize).min(ink.width), (b.bottom.max(0.0) as usize).min(ink.height));
+    let mut out: Option<Bounds> = None;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            if ink.at(x, y) {
+                let p = Bounds { left: x as f32, top: y as f32, right: x as f32 + 1.0, bottom: y as f32 + 1.0 };
+                out = Some(out.map_or(p, |o| o.union(&p)));
+            }
+        }
+    }
+    out
+}
+
+/// Rows of separate underlines (column rulers) and single long lines
+/// (separators), from ruled lines not part of a table and from dashes.
+fn find_rulers(h: &[Rule], dashes: &[Bounds], tables: &[Table], th: f32) -> (Vec<Ruler>, Vec<Ruler>) {
+    let mut segments: Vec<(f32, f32, f32)> = h
+        .iter()
+        .filter(|r| !tables.iter().any(|t| contains(&t.region, (r.start + r.end) / 2.0, r.pos)))
+        .map(|r| (r.pos, r.start, r.end))
+        .collect();
+    // Dashes in a row ("-----"), each printed separately.
+    let mut marks: Vec<Bounds> = dashes.to_vec();
+    marks.sort_by(|a, b| a.center().1.total_cmp(&b.center().1));
+    let mut rows: Vec<Vec<Bounds>> = Vec::new();
+    for m in marks {
+        match rows.last_mut() {
+            Some(r) if (m.center().1 - r[0].center().1).abs() <= th * 0.3 => r.push(m),
+            _ => rows.push(vec![m]),
+        }
+    }
+    for mut row in rows {
+        row.sort_by(|a, b| a.left.total_cmp(&b.left));
+        let mut run: Vec<Bounds> = Vec::new();
+        let flush = |run: &mut Vec<Bounds>, segments: &mut Vec<(f32, f32, f32)>| {
+            if run.len() >= 3 {
+                let y = run.iter().map(|b| b.center().1).sum::<f32>() / run.len() as f32;
+                segments.push((y, run[0].left, run[run.len() - 1].right));
+            }
+            run.clear();
+        };
+        for m in row {
+            if run.last().is_some_and(|l| m.left - l.right > th * 0.6) {
+                flush(&mut run, &mut segments);
+            }
+            run.push(m);
+        }
+        flush(&mut run, &mut segments);
+    }
+    // Segments at the same height make a row.
+    segments.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut groups: Vec<Vec<(f32, f32, f32)>> = Vec::new();
+    for s in segments {
+        match groups.last_mut() {
+            Some(g) if (s.0 - g[0].0).abs() <= th * 0.4 => g.push(s),
+            _ => groups.push(vec![s]),
+        }
+    }
+    let (mut rulers, mut separators) = (Vec::new(), Vec::new());
+    for mut g in groups {
+        g.sort_by(|a, b| a.1.total_cmp(&b.1));
+        let y = g.iter().map(|s| s.0).sum::<f32>() / g.len() as f32;
+        let runs: Vec<(f32, f32)> = g.iter().map(|s| (s.1, s.2)).filter(|(a, b)| b - a >= th * 1.2).collect();
+        let apart = runs.windows(2).all(|w| w[1].0 - w[0].1 >= th * 0.3);
+        if runs.len() >= 2 && apart {
+            rulers.push(Ruler { y, runs });
+        } else if runs.len() == 1 && runs[0].1 - runs[0].0 >= th * 10.0 {
+            separators.push(Ruler { y, runs });
+        }
+    }
+    (rulers, separators)
+}
+
+/// A table for each column ruler that has a heading line just above it and
+/// lines of text below. It runs from the heading down to the next table (or
+/// the end of the page); its columns are split halfway between underlines.
+fn ruler_tables(rulers: &[Ruler], lines: &[Vec<Bounds>], tables: &[Table], th: f32) -> Vec<Table> {
+    let mut out: Vec<Table> = Vec::new();
+    for (i, r) in rulers.iter().enumerate() {
+        let heading = lines.iter().filter(|l| {
+            let bottom = l.iter().map(|w| w.bottom).fold(f32::MIN, f32::max);
+            bottom <= r.y && r.y - bottom <= th * 3.0
+        });
+        let Some(top) = heading.map(|l| line_top(l)).min_by(f32::total_cmp) else { continue };
+        let below = lines.iter().filter(|l| line_top(l) > r.y && line_top(l) - r.y < th * 8.0).count();
+        if below == 0 {
+            continue;
+        }
+        let next = rulers[i + 1..]
+            .iter()
+            .map(|n| n.y - th * 2.5)
+            .chain(tables.iter().map(|t| t.region.top).filter(|&t| t > r.y))
+            .fold(f32::MAX, f32::min);
+        let cuts = r.runs.windows(2).map(|w| (w[0].1 + w[1].0) / 2.0).collect();
+        out.push(Table {
+            region: Bounds { left: f32::MIN, top, right: f32::MAX, bottom: next },
+            cuts,
+            grid: None,
+            row_cuts: Vec::new(),
+        });
+    }
+    out
+}
+
 /// Group words into lines of text, top to bottom, each left to right.
 pub fn text_lines(words: &[Bounds]) -> Vec<Vec<Bounds>> {
     let mut sorted: Vec<Bounds> = words.to_vec();
@@ -403,13 +625,13 @@ pub fn text_lines(words: &[Bounds]) -> Vec<Vec<Bounds>> {
 }
 
 /// Split a line into phrases: runs of words with ordinary spaces between.
-fn phrases(line: &[Bounds], th: f32) -> Vec<Vec<Bounds>> {
+fn phrases(line: &[Bounds], gap: f32) -> Vec<Vec<Bounds>> {
     // Spaces grow with the type: judge gaps by this line's own text size
     // (a large title) but never below the page's.
-    let mut heights: Vec<f32> = line.iter().map(Bounds::height).filter(|&h| h >= th * 0.5).collect();
+    let mut heights: Vec<f32> = line.iter().map(Bounds::height).collect();
     heights.sort_by(f32::total_cmp);
-    let line_h = heights.get(heights.len() / 2).copied().unwrap_or(th);
-    let gap = 0.8 * th.max(line_h * 0.8);
+    let line_h = heights.get(heights.len() / 2).copied().unwrap_or(0.0);
+    let gap = gap.max(0.64 * line_h);
     let mut out: Vec<Vec<Bounds>> = Vec::new();
     for w in line {
         match out.last_mut() {
@@ -426,10 +648,10 @@ fn span(words: &[Bounds]) -> Bounds {
 
 /// Column boundaries for lines of text without ruled columns: the gaps that
 /// run down through (nearly) all the lines with more than one phrase.
-pub fn infer_cuts(lines: &[Vec<Bounds>], th: f32) -> Vec<f32> {
+pub fn infer_cuts(lines: &[Vec<Bounds>], th: f32, gap: f32) -> Vec<f32> {
     let multi: Vec<Vec<Bounds>> = lines
         .iter()
-        .map(|l| phrases(l, th).iter().map(|p| span(p)).collect::<Vec<_>>())
+        .map(|l| phrases(l, gap).iter().map(|p| span(p)).collect::<Vec<_>>())
         .filter(|p: &Vec<Bounds>| p.len() >= 2)
         .collect();
     if multi.len() < 2 {
@@ -570,16 +792,28 @@ fn push_cell(out: &mut Layout, row: usize, col: usize, words: &[Bounds], boxed: 
         c.lines = cell_lines(&all);
         return;
     }
-    out.cells.push(Cell { row, col, rows: 1, cols: 1, lines: cell_lines(words), boxed });
+    out.cells.push(Cell { row, col, rows: 1, cols: 1, lines: cell_lines(words), boxed, block: out.block });
 }
 
 /// A line of text outside any table.
-/// A line of text outside any table. With `spread`, phrases that fall in
-/// the same column move along to the next free one (a heading line such as
-/// "Invoice 20517   Date 10/02/2026   PO 4471-B" above a table).
-fn place_line(out: &mut Layout, row: usize, words: &[Bounds], cuts: &[f32], th: f32, spread: bool) {
-    let ps = phrases(words, th);
-    if ps.len() == 1 {
+/// How a line's phrases go into columns.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Place {
+    /// Text around a table: phrases that fall in the same column move along
+    /// to the next free one (a heading line such as "Invoice 20517   Date
+    /// 10/02/2026   PO 4471-B" above a table); a lone phrase stays whole.
+    AroundTable,
+    /// A row of a table without lines; a lone phrase (a title) stays whole.
+    Columns,
+    /// A row of a table with underlined columns: every column edge splits.
+    Strict,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn place_line(out: &mut Layout, row: usize, words: &[Bounds], cuts: &[f32], th: f32, gap: f32, how: Place) {
+    let spread = how == Place::AroundTable;
+    let ps = phrases(words, gap);
+    if ps.len() == 1 && how != Place::Strict {
         let col = phrase_column(cuts, &span(&ps[0]), th);
         push_cell(out, row, col, &ps[0], false);
         return;
@@ -644,13 +878,21 @@ fn place_grid(out: &mut Layout, first_row: usize, grid: &Grid, words: &[Bounds],
                 continue;
             }
             let lines = contents.get(&(r, c)).map(|ws| cell_lines(ws)).unwrap_or_default();
-            out.cells.push(Cell { row: first_row + r, col: c, rows: nr, cols: nc, lines, boxed: true });
+            out.cells.push(Cell {
+                row: first_row + r,
+                col: c,
+                rows: nr,
+                cols: nc,
+                lines,
+                boxed: true,
+                block: out.block,
+            });
         }
     }
     out.rows = first_row + rows;
 }
 
-fn place_lined(out: &mut Layout, first_row: usize, t: &Table, words: &[Bounds], th: f32) {
+fn place_lined(out: &mut Layout, first_row: usize, t: &Table, words: &[Bounds], th: f32, gap: f32) {
     // Rows between the lines; text above the first or below the last line
     // within the region is not expected (the region ends at the lines).
     let bands = t.row_cuts.len().saturating_sub(1);
@@ -666,7 +908,7 @@ fn place_lined(out: &mut Layout, first_row: usize, t: &Table, words: &[Bounds], 
         }
         let mut by_col: std::collections::BTreeMap<usize, Vec<Bounds>> = Default::default();
         for line in text_lines(&ws) {
-            for p in phrases(&line, th) {
+            for p in phrases(&line, gap) {
                 let whole = column_of(&t.cuts, p[0].left) == column_of(&t.cuts, p[p.len() - 1].right);
                 for w in &p {
                     let c =
@@ -710,7 +952,7 @@ mod tests {
             b(120.0, 240.0, 200.0, 270.0),
             b(620.0, 340.0, 690.0, 370.0),
         ];
-        let l = layout(&words, &h, &v, 30.0);
+        let l = layout(&words, &h, &v, &[], None, None, 30.0);
         assert_eq!((l.rows, l.cols), (3, 3));
         let header = l.cells.iter().find(|c| c.row == 0 && c.col == 1).unwrap();
         assert_eq!((header.rows, header.cols), (1, 2));
@@ -735,7 +977,7 @@ mod tests {
         }
         // A title across the top.
         words.push(b(100.0, 20.0, 600.0, 60.0));
-        let l = layout(&words, &[], &[], 30.0);
+        let l = layout(&words, &[], &[], &[], None, None, 30.0);
         assert_eq!(l.cols, 3, "{:?}", l.cells);
         assert_eq!(l.rows, 7);
         let title = l.cells.iter().find(|c| c.row == 0).unwrap();
