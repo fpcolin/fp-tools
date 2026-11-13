@@ -62,11 +62,29 @@ impl Default for VcSettings {
     }
 }
 
+/// Scan to Excel settings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScanSettings {
+    /// The last scan opened (its folder is where the next one is looked for).
+    pub last_file: String,
+    /// Open the workbook in Excel once it is saved.
+    pub option_open_after: bool,
+    /// All pages on one worksheet rather than one sheet per page.
+    pub option_one_sheet: bool,
+}
+
+impl Default for ScanSettings {
+    fn default() -> Self {
+        ScanSettings { last_file: String::new(), option_open_after: true, option_one_sheet: false }
+    }
+}
+
 /// Which page the window opens on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
     Qr,
     Converter,
+    Scan,
 }
 
 impl Page {
@@ -74,6 +92,7 @@ impl Page {
         match self {
             Page::Qr => "qr",
             Page::Converter => "vc",
+            Page::Scan => "scan",
         }
     }
 }
@@ -98,6 +117,7 @@ impl QrKind {
 pub struct Settings {
     pub qr: QrSettings,
     pub vc: VcSettings,
+    pub scan: ScanSettings,
     pub last_page: Page,
     pub qr_kind: QrKind,
     /// The old separate apps have been removed automatically (or, before
@@ -111,6 +131,7 @@ impl Default for Settings {
         Settings {
             qr: QrSettings::default(),
             vc: VcSettings::default(),
+            scan: ScanSettings::default(),
             last_page: Page::Qr,
             qr_kind: QrKind::Url,
             old_apps_handled: false,
@@ -134,6 +155,9 @@ impl config_store::Settings for Settings {
             ("vc_filepath", s(&self.vc.filepath)),
             ("vc_overwrite", Value::Bool(self.vc.option_overwrite)),
             ("vc_open_folder", Value::Bool(self.vc.option_open_folder)),
+            ("scan_last_file", s(&self.scan.last_file)),
+            ("scan_open_after", Value::Bool(self.scan.option_open_after)),
+            ("scan_one_sheet", Value::Bool(self.scan.option_one_sheet)),
             ("old_apps_prompted", Value::Bool(self.old_apps_handled)),
         ]
     }
@@ -142,6 +166,7 @@ impl config_store::Settings for Settings {
         match stored.get("last_page").and_then(Value::as_str) {
             Some("qr") => self.last_page = Page::Qr,
             Some("vc") => self.last_page = Page::Converter,
+            Some("scan") => self.last_page = Page::Scan,
             _ => {}
         }
         match stored.get("qr_kind").and_then(Value::as_str) {
@@ -161,6 +186,10 @@ impl config_store::Settings for Settings {
         take_string(stored, "vc_filepath", &mut vc.filepath);
         take_bool(stored, "vc_overwrite", &mut vc.option_overwrite);
         take_bool(stored, "vc_open_folder", &mut vc.option_open_folder);
+        let scan = &mut self.scan;
+        take_string(stored, "scan_last_file", &mut scan.last_file);
+        take_bool(stored, "scan_open_after", &mut scan.option_open_after);
+        take_bool(stored, "scan_one_sheet", &mut scan.option_one_sheet);
         take_bool(stored, "old_apps_prompted", &mut self.old_apps_handled);
     }
 }
@@ -259,8 +288,9 @@ mod tests {
 
     #[test]
     fn round_trips_through_fields() {
-        let mut s = Settings { last_page: Page::Converter, qr_kind: QrKind::Contact, ..Default::default() };
+        let mut s = Settings { last_page: Page::Scan, qr_kind: QrKind::Contact, ..Default::default() };
         s.qr.saveto_name = "x".into();
+        s.scan = ScanSettings { last_file: "C:\\scan.pdf".into(), option_open_after: false, option_one_sheet: true };
         s.vc.option_overwrite = false;
         s.old_apps_handled = true;
         let mut back = Settings::default();

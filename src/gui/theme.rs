@@ -79,6 +79,8 @@ impl Font {
 pub enum Icon {
     Qr,
     File,
+    /// A sheet with rows and columns (Scan to Excel).
+    Table,
     Gear,
     Help,
     CheckCircle,
@@ -406,6 +408,13 @@ pub fn draw_icon(cv: &mut Canvas, icon: Icon, r: RectF, rgb: u32) {
             line(cv, (8.5, 8.5), (12.5, 8.5));
             line(cv, (8.5, 12.5), (15.5, 12.5));
             line(cv, (8.5, 16.5), (15.5, 16.5));
+        }
+        Icon::Table => {
+            let (x, y) = p(3.0, 4.0);
+            cv.stroke_rrect(RectF::new(x, y, 18.0 * k, 16.0 * k), 2.0 * k, sw, rgb);
+            line(cv, (3.5, 9.5), (20.5, 9.5));
+            line(cv, (3.5, 14.8), (20.5, 14.8));
+            line(cv, (9.5, 4.5), (9.5, 19.5));
         }
         Icon::Gear => {
             let (cx, cy) = p(12.0, 12.0);

@@ -1,11 +1,15 @@
 # Flooring Partners App
 
-One Windows desktop app for Flooring Partners that replaces two older ones:
+One Windows desktop app for Flooring Partners that replaces two older ones
+and adds a third tool:
 
 - **QR codes** (was *QR Code Generator*): makes QR codes for web addresses and
   contact cards, with the company logo in the middle.
 - **VendorCafe converter** (was *VendorCafe CSV Converter*): turns a Rollmaster
   invoice export into one line per invoice, ready to upload to VendorCafe.
+- **Scan to Excel**: reads the tables on a scanned page and saves them as an
+  Excel workbook, like the scan-to-Excel feature some scanners have, but for
+  any scanner.
 
 It ships as a single self-contained `.exe` with no bundled DLLs and no runtime
 to install. It can be installed for all users of a machine or for one user
@@ -13,8 +17,8 @@ only, and has a built-in, hardened updater.
 
 ## What it does
 
-The window has a sidebar with four pages: **QR codes**, **VendorCafe
-converter**, **Settings** and **Help**. The sidebar also shows the version and
+The window has a sidebar with five pages: **QR codes**, **VendorCafe
+converter**, **Scan to Excel**, **Settings** and **Help**. The sidebar also shows the version and
 whether an update is available.
 
 ### QR codes
@@ -55,6 +59,38 @@ written back exactly as exported. Output is byte-for-byte identical to the old
 converter; that was checked on thousands of generated exports, including
 malformed ones. The PO/WO choice is made each time, like the old app's two
 buttons, and is not remembered.
+
+### Scan to Excel
+
+Choose a scanned **PDF, TIFF, JPEG or PNG** (multi-page PDFs and TIFFs too).
+The pages are read in the background, with progress and a Cancel button, and
+a preview shows the result as spreadsheet cells. **Save as Excel…** writes an
+`.xlsx` workbook (one sheet per page, or all pages on one sheet) and, if you
+like, opens it in Excel. A scan can also be dropped on the program's icon.
+
+- **Tables with lines** become cells with borders, including cells that span
+  several rows or columns (merged in Excel). **Tables with lines between rows
+  only**, and **tables without lines**, are split into columns where the text
+  lines up. Text above, below and around tables (titles, addresses, totals)
+  goes into rows of its own, under the columns it sits over.
+- **Values**: numbers, amounts (`$1,234.50`, `(45.00)`, `45.00-`),
+  percentages and US dates become real numbers and dates, formatted as they
+  were printed. Codes with leading zeros (`00123`) and long account numbers
+  stay as text. In columns of numbers, letters that are common misreadings of
+  digits (O for 0, l for 1…) are corrected.
+- **Page clean-up**: pages scanned sideways or upside down are turned upright,
+  tilted pages are straightened, small or very large text is rescaled, ruled
+  lines are removed before reading, and black-and-white scans are softened
+  slightly, which the recogniser reads better.
+- **Offline**: text is recognised on the PC by [ocrs](https://github.com/robertknight/ocrs),
+  a pure-Rust OCR engine, with its two neural-network models compiled into the
+  exe. Nothing is uploaded, and no DLLs or GPU are used. A page takes a few
+  seconds; the exe is about 12 MB larger because of the models.
+
+Printed text is read well; handwriting is not. PDFs whose pages are stored
+with **JBIG2** or **JPEG 2000** compression (some scanners' "high
+compression" PDF settings) can't be read yet: the app says so, and scanning to
+an ordinary PDF or TIFF works. Encrypted PDFs aren't read either.
 
 ## Installing
 
@@ -169,7 +205,10 @@ UTF-8 or UTF-16. If it exists but can't be read, updates stay off.
   - `user32` and `gdi32` (the window; every program with a window uses them);
   - `comdlg32` (the standard Open and Save As dialogs).
 
-  Images are decoded and encoded in Rust, so no imaging DLLs are loaded. HTTPS
+  Images are decoded and encoded in Rust, so no imaging DLLs are loaded. Scan
+  to Excel's text recognition (ocrs and the RTen neural-network engine), its
+  PDF and TIFF readers and its Excel writer are Rust code inside the exe too,
+  and add no DLLs. HTTPS
   is done in Rust too, so `winhttp`, `schannel` and `crypt32` are never
   loaded. The release build fails if a change would add any other DLL; see
   `build/allowed-dlls.txt`.
@@ -180,8 +219,8 @@ UTF-8 or UTF-16. If it exists but can't be read, updates stay off.
   friends) while they are open; the socket library loads helpers such as
   `mswsock.dll` and `dnsapi.dll` during the update check. With updates turned
   off, the last never happens.
-- **Child processes.** It starts `explorer.exe` to open an image or show a
-  file in its folder. When installing an update, it starts the downloaded
+- **Child processes.** It starts `explorer.exe` to open an image or a saved
+  workbook (which then opens in Excel) or to show a file in its folder. When installing an update, it starts the downloaded
   installer from `%LOCALAPPDATA%\Flooring Partners\Tools\updates\`. When asked
   to remove the old apps, it runs their existing `unins000.exe`.
 - **Updates.** Each release has a new file hash. Sign the releases (see
@@ -198,8 +237,10 @@ Open **Flooring Partners App** from the Start menu.
 - **VendorCafe converter:** *Choose file…*, pick *PO number* or *Work order
   number*, click **Convert** (or press Enter). The result line has
   **Show in folder**.
-- Keyboard: Ctrl+1 / Ctrl+2 / Ctrl+3 switch pages, F1 opens Help, Tab moves
-  between boxes and Alt + the underlined letter jumps to one.
+- **Scan to Excel:** *Choose file…* (or drop a scan on the program's icon),
+  check the preview, click **Save as Excel…** (or press Enter).
+- Keyboard: Ctrl+1 to Ctrl+5 switch pages, F1 opens Help, Tab moves between
+  boxes and Alt + the underlined letter jumps to one.
 
 If Windows blocks saving to a folder (usually Defender's "Controlled folder
 access", OneDrive, or the file being open elsewhere), the program says so and
@@ -214,6 +255,7 @@ settings as the window:
 FPTools url "https://example.com/page"
 FPTools vcard --first Ann --last Smith --mobile "+1 555 010 0000" --email ann@example.com
 FPTools convert po "C:\Exports\invoices.csv"
+FPTools scan "C:\Scans\price list.pdf" --out "C:\Scans\price list.xlsx"
 FPTools set folder "C:\Users\Ann\QR Codes"
 FPTools set convert-overwrite off
 FPTools settings
@@ -235,6 +277,27 @@ saved in the user's own profile and stays locked from the checksum until the
 installer finishes, so nothing can swap it in between. For a machine-wide
 install, Windows asks for administrator approval. The program then reopens as
 the user who was using it, not as the administrator.
+
+## Changes in 3.1.0
+
+- New **Scan to Excel** page: reads the tables in a scanned PDF, TIFF, JPEG or
+  PNG and saves them as an Excel workbook, entirely on the PC. See
+  [Scan to Excel](#scan-to-excel). Also on the command line
+  (`FPTools scan <file>`), and a scan dropped on the program's icon opens
+  there.
+- Settings has a Scan to Excel card (open in Excel after saving; all pages on
+  one sheet). Ctrl+3 is now Scan to Excel; Settings moved to Ctrl+4.
+- Includes the 3.0.4 changes below (3.0.4 itself was not released).
+- Building needs Rust 1.94 or newer.
+
+## Changes in 3.0.4
+
+- The update check no longer says "Couldn't check for updates" after a
+  passing network hiccup: at start-up it tries again after 15 seconds and
+  after another minute before giving up, and allows more time per attempt.
+- Connections try IPv6 and IPv4 side by side, as browsers do, so a network
+  with broken IPv6 can no longer make the check time out.
+- Settings → Updates shows why the last check failed.
 
 ## Changes in 3.0.3
 
@@ -319,7 +382,12 @@ The Flooring Partners name, logo and icon (`assets/fp_logo.png`,
 are granted.
 
 The app includes open-source components (the Rust standard library, rustls,
-ring, webpki-roots and their dependencies) that stay under their own licences.
+ring, webpki-roots, ocrs, RTen and their dependencies) that stay under their
+own licences. Scan to Excel's text detection and recognition models
+(`assets/ocr/`), by Robert Knight from
+[ocrs-models](https://github.com/robertknight/ocrs-models), are used unchanged
+under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/); Help
+in the app credits them.
 
 See [LICENSE.txt](LICENSE.txt) for the full terms.
 
@@ -333,7 +401,10 @@ assistance was then used to refactor that code and build the packaging and
 release tooling. Version 3's conversion from Python to Rust, the merge into
 one program and the new window were also done with AI assistance. That
 includes the hand-written QR encoder, image codecs, HTTP code and Windows UI
-code, the updater hardening and the multi-user installer.
+code, the updater hardening and the multi-user installer. Scan to Excel (page
+clean-up, table layout, the PDF, TIFF and fax readers and the Excel writer)
+was written with AI assistance too; the OCR engine and models it uses are
+third-party, as above.
 
 All AI-generated code is reviewed and tested before being committed, and the
 maintainer is responsible for everything in this repository regardless of how

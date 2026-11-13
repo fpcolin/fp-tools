@@ -156,10 +156,11 @@ fn split_runs<'a>(data: &'a [u8], class: &dyn Fn(&u8) -> bool, whole: bool, mini
         if data.iter().all(class) {
             return vec![(true, data)];
         }
-        if let Some((b'\n', head)) = data.split_last() {
-            if !head.is_empty() && head.iter().all(class) {
-                return vec![(true, head), (false, &data[head.len()..])];
-            }
+        if let Some((b'\n', head)) = data.split_last()
+            && !head.is_empty()
+            && head.iter().all(class)
+        {
+            return vec![(true, head), (false, &data[head.len()..])];
         }
         return vec![(false, data)];
     }

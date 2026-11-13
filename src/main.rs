@@ -18,7 +18,16 @@ fn main() -> ExitCode {
     };
     #[cfg(windows)]
     if args.is_empty() {
-        return fp_tools::gui::run();
+        return fp_tools::gui::run(None);
+    }
+    // A scan dropped on the program's icon (or opened with it): open the
+    // window on Scan to Excel and read it.
+    #[cfg(windows)]
+    if let [only] = args.as_slice() {
+        let path = std::path::Path::new(only);
+        if path.is_file() && fp_tools::scan::looks_like_scan(path) {
+            return fp_tools::gui::run(Some(path.to_path_buf()));
+        }
     }
     attach_console();
     fp_tools::cli::run(&args)

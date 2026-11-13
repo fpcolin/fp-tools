@@ -44,10 +44,18 @@ modify or distribute the Software in any other way.
 3. THIRD-PARTY COMPONENTS
 
    The Software includes open-source components, among them the Rust standard
-   library, rustls, ring, webpki-roots, and their dependencies. Each of those
-   components remains under its own licence, which can be found with the
-   component's source code. Nothing in this licence limits the rights those
-   licences give you in those components.
+   library, rustls, ring, webpki-roots, ocrs, RTen, and their dependencies.
+   Each of those components remains under its own licence, which can be found
+   with the component's source code. Nothing in this licence limits the rights
+   those licences give you in those components.
+
+   The text detection and recognition models in assets/ocr/ (also compiled
+   into the program) are by Robert Knight, from
+   https://github.com/robertknight/ocrs-models, and are licensed under the
+   Creative Commons Attribution-ShareAlike 4.0 International licence
+   (https://creativecommons.org/licenses/by-sa/4.0/). They are included
+   unmodified. They are not part of "the Software" for the purposes of this
+   licence, which does not limit the rights CC BY-SA 4.0 gives you in them.
 
 
 4. NO WARRANTY

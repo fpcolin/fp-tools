@@ -11,6 +11,8 @@ fp-tools/
 ├─ assets/
 │  ├─ fp.ico               app + installer icon
 │  ├─ fp_logo.png          default embedded logo (compiled into the exe)
+│  ├─ ocr/                 Scan to Excel's text detection and recognition
+│  │                       models (ONNX, CC BY-SA 4.0; compiled into the exe)
 │  └─ app.manifest         Windows manifest (asInvoker, Win10+, long paths,
 │                          per-monitor DPI, current-style controls)
 ├─ src/
@@ -27,6 +29,7 @@ fp-tools/
 │  ├─ render.rs            modules, rounded corners, logo placement
 │  ├─ qr/                  QR encoder (matches Python qrcode's segmentation)
 │  ├─ image/               PNG decode/encode, JPEG decode, zlib, Lanczos resize
+│  ├─ scan/                Scan to Excel, see "Scan to Excel" below
 │  ├─ gui/                 the window (Windows only), see "The window" below
 │  │  ├─ win32.rs          hand-written bindings: user32, gdi32, comdlg32
 │  │  ├─ mod.rs            main window, page switching, message loop
@@ -36,7 +39,8 @@ fp-tools/
 │  │  ├─ widgets.rs        creating and reading the standard controls
 │  │  ├─ dialogs.rs        Open / Save As dialogs
 │  │  ├─ updates.rs        sidebar update card, update flow, old-app removal
-│  │  └─ *_page.rs         QR codes, VendorCafe converter, Settings, Help
+│  │  └─ *_page.rs         QR codes, VendorCafe converter, Scan to Excel,
+│  │                       Settings, Help
 │  └─ common/              shared plumbing
 │     ├─ config_store.rs   per-user config.json, atomic writes
 │     ├─ fsutil.rs         safe file creation in shared folders
@@ -58,10 +62,13 @@ fp-tools/
 
 ## Dependencies
 
-Only three crates, all for HTTPS: `rustls` (TLS), `ring` (its cryptography,
-also used here for SHA-256 and random numbers) and `webpki-roots` (Mozilla's
-root certificates, compiled in). Everything else is hand-written or comes from
-the standard library. That includes the QR encoder and the PNG and JPEG
+Three crates for HTTPS: `rustls` (TLS), `ring` (its cryptography, also used
+here for SHA-256 and random numbers) and `webpki-roots` (Mozilla's root
+certificates, compiled in). And, for Scan to Excel's text recognition, `ocrs`
+with the `rten` neural-network runtime it runs on (`rten-imageproc` and
+`rten-tensor` for its types); they are pure Rust (with `rayon` for threads)
+and import no DLLs beyond the standard library's. They need Rust 1.94 or
+newer. Everything else is hand-written or comes from the standard library. That includes the QR encoder and the PNG and JPEG
 codecs, which replace the Python `qrcode` and Pillow packages. The code avoids Windows DLLs where it can: settings
 paths come from environment variables, files are opened with `explorer.exe`,
 and admin policy comes from a file rather than the registry. That keeps the
@@ -92,14 +99,47 @@ the mock-up (design A). Points worth knowing before changing it:
 - **DPI.** Per-monitor v2. Fonts are recreated and everything is laid out
   again on `WM_DPICHANGED`.
 - **Keyboard.** The message loop runs `IsDialogMessage`, so Tab, Shift+Tab,
-  Alt+letter and Enter behave as in a dialog box. Ctrl+1..4 and F1 switch
+  Alt+letter and Enter behave as in a dialog box. Ctrl+1..5 and F1 switch
   pages. Arrow keys between the PO/WO radio buttons are handled directly.
-- **Background work** (update check, download, removing old apps) runs on a
+- **Background work** (update check, download, removing old apps, reading a
+  scan) runs on a
   thread that sends an `Event` down a channel and posts `WM_APP_EVENT` to
   wake the window.
 - **Closing for an update.** Setup closes the program through Restart Manager
   (`WM_QUERYENDSESSION` / `WM_ENDSESSION`); the window saves pending edits and
   exits there.
+
+## Scan to Excel
+
+`src/scan/`, in the order a page goes through it:
+
+| File | Does |
+|---|---|
+| `input.rs` | Recognises the file by its contents: PNG/JPEG (the `image` codecs), TIFF, PDF. |
+| `tiff.rs` | Every page of a TIFF: strips or tiles; none, CCITT, LZW (+ predictor), Deflate, PackBits, JPEG; bilevel, grey, palette, RGB, CMYK; the Orientation tag. |
+| `ccitt.rs` | Fax decoding (T.4 1-D/2-D, T.6), for TIFF and PDF. |
+| `pdf.rs` | Finds each page's images (following forms, `cm` transforms, page /Rotate) and paints them onto a grey page as a viewer would. Finds objects by scanning the file, so damaged cross-reference tables, object streams and incremental updates all work. Filters: Flate, LZW (with predictors), ASCIIHex, ASCII85, RunLength; images: DCT, CCITT, raw. JBIG2, JPX and encryption are refused with a clear message. |
+| `gray.rs` | The greyscale page type: resize, rotate, crop, soften. |
+| `prep.rs` | Adaptive thresholding, blobs, text height, sideways pages (neighbouring characters sit above each other), skew (projection profiles), ruled lines (long thin runs, merged), and erasing them. |
+| `ocr.rs` | The ocrs engine and its two models (`include_bytes!` from `assets/ocr/`). Word detection runs tile by tile at a scale where text is about 12 px high (the detection model takes 600 x 800 pixels at a time). Upside-down pages are spotted by how confidently the recognition model reads a sample of lines each way up. Lines are read in one batch per page. |
+| `table.rs` | Rows and columns: ruled grids (with merged cells from missing lines), lined tables (rules between rows only), and alignment-based columns for tables without lines. Text outside tables is placed under the columns it sits over. |
+| `mod.rs` | The pipeline per page, plus fixes the recogniser needs: single characters it missed, commas and full stops at word edges, spaced dashes it drops. |
+| `values.rs` | Text to numbers, currency, percentages and dates with matching Excel formats; codes stay text. |
+| `xlsx.rs` | The workbook: a small zip writer (deflate from `image::zlib`) and SpreadsheetML with inline strings, number formats, borders and merges. |
+
+The models are `text-detection.onnx` and `text-recognition.onnx` from
+[ocrs-models](https://github.com/robertknight/ocrs-models) (the files ocrs
+itself downloads; CC BY-SA 4.0, credited in Help and LICENSE.txt). To update
+them, replace the two files and check `cargo test` (`tests/scan.rs` reads
+small scans end to end).
+
+Accuracy was checked during development on generated scans with known
+contents: different fonts (sans, serif, monospace, Calibri-like) from 8 to
+18 pt, 200 and 300 dpi, tilted, sideways and upside down, colour JPEG,
+uneven lighting, and black-and-white Group 4. Every cell came out right on
+the greyscale and colour versions; black-and-white scans had one wrong digit
+in about 500 cells. Real scans from the office scanners are the best test:
+run `FPTools scan <file>` and compare.
 
 ### Why there is a vendored getrandom
 

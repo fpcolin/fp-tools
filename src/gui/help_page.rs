@@ -9,7 +9,7 @@ use crate::APP;
 
 const ID_OPEN_SETTINGS: u16 = 500;
 
-const SECTIONS: [(&str, &str); 4] = [
+const SECTIONS: [(&str, &str); 6] = [
     (
         "QR codes",
         "Choose Web address or Contact card and fill in the details; the preview updates as you type. \
@@ -26,19 +26,38 @@ const SECTIONS: [(&str, &str); 4] = [
          PO number keeps the PO No and Job No columns. Work order number renames PO No to WO No and drops Job No.",
     ),
     (
+        "Scan to Excel",
+        "1.  Scan the page with any scanner, to a PDF, TIFF, JPEG or PNG file (300 dpi works best).\n\
+         2.  Choose the file. Its pages are read on this PC, which takes a few seconds a page.\n\
+         3.  Check the preview, then Save as Excel.\n\n\
+         Tables with lines become cells with borders, including cells that span several columns; tables \
+         without lines are split into columns where the text lines up. Text around the tables goes in rows of \
+         its own. Numbers, amounts, percentages and dates become real numbers and dates, shown as they were \
+         printed; codes such as 00123 stay as text. Each page becomes a sheet, or all the pages one sheet.\n\n\
+         Printed text is read; handwriting isn't. Always check important figures against the paper. \
+         PDFs saved with JBIG2 or JPEG 2000 compression can't be read: scan to TIFF or ordinary PDF instead.",
+    ),
+    (
         "Keyboard",
-        "Ctrl+1 QR codes · Ctrl+2 VendorCafe converter · Ctrl+3 Settings · F1 Help.\n\
-         Enter saves the QR code or converts the file. Alt plus an underlined letter jumps to that box.",
+        "Ctrl+1 QR codes · Ctrl+2 VendorCafe converter · Ctrl+3 Scan to Excel · Ctrl+4 Settings · F1 Help.\n\
+         Enter saves the QR code, converts the file, or saves the spreadsheet. Alt plus an underlined letter jumps to that box.",
     ),
     (
         "Settings and scripts",
         "Your settings are kept in your own profile, so everyone who uses this PC has their own. \
          The same features can be used from scripts: run \"FPTools help\" in a command prompt for the commands.",
     ),
+    (
+        "Acknowledgements",
+        "Scan to Excel reads text with ocrs by Robert Knight, running on his RTen engine (both MIT or \
+         Apache 2.0 licence). Its text detection and recognition models, built into this app unchanged, \
+         are by Robert Knight and licensed under Creative Commons Attribution-ShareAlike 4.0 \
+         (creativecommons.org/licenses/by-sa/4.0); they come from github.com/robertknight/ocrs-models.",
+    ),
 ];
 
 pub struct Controls {
-    pub texts: [HWND; 4],
+    pub texts: [HWND; 6],
     pub open_settings: HWND,
 }
 
@@ -74,7 +93,7 @@ pub fn layout(ui: &Ui, _m: &mut Model, width: f32) -> Frame {
         let th = text_height(Font::Body, body, iw);
         f.place(h.texts[i], RectF::new(x0, y, iw, th));
         y += th;
-        if i == SECTIONS.len() - 1 {
+        if title == &"Settings and scripts" {
             y += 18.0;
             let w = text_width(Font::Body, "Open settings folder") + 36.0;
             f.place(h.open_settings, RectF::new(x0, y, w, 36.0));
@@ -89,11 +108,12 @@ pub fn layout(ui: &Ui, _m: &mut Model, width: f32) -> Frame {
 }
 
 pub fn command(id: u16, code: u16) {
-    if id == ID_OPEN_SETTINGS && code == BN_CLICKED {
-        if let Some(dir) = crate::common::paths::settings_dir(APP.vendor, APP.name) {
-            let _ = std::fs::create_dir_all(&dir);
-            let _ = crate::common::shell::open(&dir);
-        }
+    if id == ID_OPEN_SETTINGS
+        && code == BN_CLICKED
+        && let Some(dir) = crate::common::paths::settings_dir(APP.vendor, APP.name)
+    {
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = crate::common::shell::open(&dir);
     }
     let _ = ui();
 }

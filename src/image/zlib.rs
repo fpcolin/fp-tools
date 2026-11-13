@@ -275,16 +275,40 @@ pub fn inflate_zlib(data: &[u8], expected_len: usize) -> Result<Vec<u8>, DecodeE
         r.reset_to(at);
         // A missing trailer is tolerated (some encoders omit it); a wrong
         // one means corrupt data.
-        if let Ok(hi) = r.bits(16) {
-            if let Ok(lo) = r.bits(16) {
-                let stored = u32::from_be_bytes([hi as u8, (hi >> 8) as u8, lo as u8, (lo >> 8) as u8]);
-                if stored != adler32(&out) {
-                    return Err(DecodeError::Invalid("zlib checksum mismatch"));
-                }
+        if let Ok(hi) = r.bits(16)
+            && let Ok(lo) = r.bits(16)
+        {
+            let stored = u32::from_be_bytes([hi as u8, (hi >> 8) as u8, lo as u8, (lo >> 8) as u8]);
+            if stored != adler32(&out) {
+                return Err(DecodeError::Invalid("zlib checksum mismatch"));
             }
         }
     }
     Ok(out)
+}
+
+/// Inflate a zlib stream of unknown size, producing at most `limit` bytes.
+/// A stream cut short returns what it produced (as most PDF readers do);
+/// more than `limit` bytes is an error.
+pub fn inflate_zlib_bounded(data: &[u8], limit: usize) -> Result<Vec<u8>, DecodeError> {
+    if data.len() < 2 {
+        return Err(DecodeError::Truncated);
+    }
+    let (cmf, flg) = (data[0], data[1]);
+    if cmf & 0x0F != 8 || cmf >> 4 > 7 || (u16::from(cmf) << 8 | u16::from(flg)) % 31 != 0 {
+        return Err(DecodeError::Invalid("bad zlib header"));
+    }
+    if flg & 0x20 != 0 {
+        return Err(DecodeError::Unsupported("zlib preset dictionary"));
+    }
+    let mut out = Vec::new();
+    let mut r = BitReader::new(&data[2..]);
+    match inflate_blocks(&mut r, &mut out, limit) {
+        Ok(true) => Ok(out),
+        Ok(false) => Err(DecodeError::Unsupported("data larger than expected")),
+        Err(DecodeError::Truncated) if !out.is_empty() => Ok(out),
+        Err(e) => Err(e),
+    }
 }
 
 /// Raw DEFLATE. Returns true when the final block ended, so the trailer

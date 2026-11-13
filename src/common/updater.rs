@@ -46,11 +46,11 @@ const MAX_MANIFEST: u64 = 64 * 1024;
 const MAX_INSTALLER: u64 = 256 * 1024 * 1024;
 const MAX_NOTES_CHARS: usize = 2000;
 
-/// Per network operation (connect, each read): short, as in the Python
-/// version, so a laptop off the VPN is not kept waiting.
-const CHECK_STEP_TIMEOUT: Duration = Duration::from_secs(6);
+/// Per network operation (connect, each read). The check runs in the
+/// background, so this leaves room for a slow network rather than failing.
+const CHECK_STEP_TIMEOUT: Duration = Duration::from_secs(10);
 /// Whole check, including the redirect to GitHub's download host.
-const CHECK_TOTAL_TIMEOUT: Duration = Duration::from_secs(20);
+const CHECK_TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
 /// Per read while downloading; the Python version allowed 300 s per read.
 const DOWNLOAD_STEP_TIMEOUT: Duration = Duration::from_secs(60);
 /// Whole download; generous for slow links.

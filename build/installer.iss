@@ -1,5 +1,5 @@
-; Inno Setup script for Flooring Partners App (QR codes and the VendorCafe
-; CSV converter in one program).
+; Inno Setup script for Flooring Partners App (QR codes, the VendorCafe CSV
+; converter and Scan to Excel in one program).
 ; Build the exe first (cargo build --release), then from the repo root:
 ;   iscc build\installer.iss                 the normal installer
 ;   iscc /DHandover build\installer.iss      the handover installer (below)

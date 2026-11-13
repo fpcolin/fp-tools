@@ -352,12 +352,13 @@ fn percent_decode(s: &str) -> String {
     let mut i = 0;
     let hex = |b: u8| (b as char).to_digit(16);
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let (Some(hi), Some(lo)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
-                out.push((hi * 16 + lo) as u8);
-                i += 3;
-                continue;
-            }
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(hi), Some(lo)) = (hex(bytes[i + 1]), hex(bytes[i + 2]))
+        {
+            out.push((hi * 16 + lo) as u8);
+            i += 3;
+            continue;
         }
         out.push(bytes[i]);
         i += 1;
@@ -441,22 +442,7 @@ impl Client {
         };
 
         let addrs = resolve(host, port, remaining(deadline)?.min(self.options.connect_timeout))?;
-        let mut last_error = io::Error::new(io::ErrorKind::NotFound, "no addresses found");
-        let mut tcp = None;
-        for addr in addrs {
-            let timeout = remaining(deadline)?.min(self.options.connect_timeout);
-            match TcpStream::connect_timeout(&addr, timeout) {
-                Ok(s) => {
-                    tcp = Some(s);
-                    break;
-                }
-                Err(e) => last_error = e,
-            }
-        }
-        let tcp = tcp.ok_or_else(|| match last_error.kind() {
-            io::ErrorKind::TimedOut => HttpError::TimedOut,
-            _ => HttpError::Connect(last_error),
-        })?;
+        let tcp = connect_any(addrs, deadline, self.options.connect_timeout)?;
         let _ = tcp.set_nodelay(true);
         let mut sock = TimedSocket { tcp, deadline, io_timeout: self.options.io_timeout };
 
@@ -473,6 +459,78 @@ impl Client {
         }
         let stream = StreamOwned::new(tls, sock);
         Ok(Conn::new(Box::new(stream), deadline))
+    }
+}
+
+/// How long to give one address before also trying the next (RFC 8305,
+/// "Happy Eyeballs").
+const ATTEMPT_DELAY: Duration = Duration::from_millis(250);
+/// At most this many addresses are tried.
+const MAX_ATTEMPTS: usize = 8;
+
+/// Connect to whichever address answers first. Attempts start 250 ms apart,
+/// alternating IPv6 and IPv4, and run side by side, the way browsers do it.
+/// Trying one address after another instead lets a network with broken IPv6
+/// (common, and invisible in a browser) eat the whole time limit on
+/// addresses that never answer.
+fn connect_any(addrs: Vec<SocketAddr>, deadline: Instant, connect_timeout: Duration) -> Result<TcpStream, HttpError> {
+    let (v6, v4): (Vec<SocketAddr>, Vec<SocketAddr>) = addrs.into_iter().partition(SocketAddr::is_ipv6);
+    let (first, second) = match v6.first() {
+        // Follow the resolver's preference for which family goes first.
+        Some(_) if !v4.is_empty() && !v6.is_empty() => (v6, v4),
+        _ => (v4, v6),
+    };
+    let mut ordered = Vec::new();
+    let (mut a, mut b) = (first.into_iter(), second.into_iter());
+    loop {
+        match (a.next(), b.next()) {
+            (None, None) => break,
+            (x, y) => ordered.extend(x.into_iter().chain(y)),
+        }
+    }
+    ordered.truncate(MAX_ATTEMPTS);
+    if ordered.is_empty() {
+        return Err(HttpError::Connect(io::Error::new(io::ErrorKind::NotFound, "no addresses found")));
+    }
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut started = 0;
+    let mut finished = 0;
+    loop {
+        if started < ordered.len() {
+            let addr = ordered[started];
+            let timeout = remaining(deadline)?.min(connect_timeout);
+            let tx = tx.clone();
+            // A losing attempt ends on its own within `timeout`; its socket
+            // is dropped when the send below finds nobody listening.
+            std::thread::Builder::new()
+                .name("connect".into())
+                .spawn(move || {
+                    let _ = tx.send(TcpStream::connect_timeout(&addr, timeout));
+                })
+                .map_err(HttpError::Connect)?;
+            started += 1;
+        }
+        let wait = if started < ordered.len() { ATTEMPT_DELAY } else { remaining(deadline)? };
+        match rx.recv_timeout(wait.min(remaining(deadline)?)) {
+            Ok(Ok(stream)) => return Ok(stream),
+            Ok(Err(e)) => {
+                finished += 1;
+                if finished == ordered.len() {
+                    // Every address failed; report the last reason.
+                    return Err(match e.kind() {
+                        io::ErrorKind::TimedOut => HttpError::TimedOut,
+                        _ => HttpError::Connect(e),
+                    });
+                }
+                // A failure frees the next attempt to start straight away.
+                if started < ordered.len() {
+                    continue;
+                }
+            }
+            Err(_) => {}
+        }
+        remaining(deadline)?;
     }
 }
 
@@ -750,10 +808,10 @@ pub struct Response {
 
 impl Response {
     fn new(conn: Conn, head: &Head, max_body: u64) -> Result<Response, HttpError> {
-        if let Some(encoding) = head.header("content-encoding") {
-            if !encoding.eq_ignore_ascii_case("identity") {
-                return Err(HttpError::Protocol("compressed response"));
-            }
+        if let Some(encoding) = head.header("content-encoding")
+            && !encoding.eq_ignore_ascii_case("identity")
+        {
+            return Err(HttpError::Protocol("compressed response"));
         }
         let framing;
         let mut content_length = None;
@@ -1045,5 +1103,29 @@ mod tests {
         assert!(matches!(result, Err(HttpError::TimedOut)), "{:?}", result.err());
         let took = started.elapsed();
         assert!(took >= Duration::from_millis(1400) && took < Duration::from_secs(3), "took {took:?}");
+    }
+
+    #[test]
+    fn connect_falls_back_to_an_address_that_answers() {
+        // The first address never answers (TEST-NET-1 is unroutable; the
+        // attempt hangs or fails), the second is a local listener: the
+        // connection must come from the second without waiting out the
+        // first's 5-second limit.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let good = listener.local_addr().unwrap();
+        let dead: SocketAddr = "192.0.2.1:9".parse().unwrap();
+        let started = Instant::now();
+        let stream = connect_any(vec![dead, good], Instant::now() + Duration::from_secs(10), Duration::from_secs(5))
+            .expect("connected");
+        assert_eq!(stream.peer_addr().unwrap(), good);
+        assert!(started.elapsed() < Duration::from_secs(2), "took {:?}", started.elapsed());
+    }
+
+    #[test]
+    fn connect_reports_failure_when_nothing_answers() {
+        // A port nobody listens on: refused at once, not a timeout.
+        let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+        let result = connect_any(vec![free], Instant::now() + Duration::from_secs(5), Duration::from_secs(2));
+        assert!(matches!(result, Err(HttpError::Connect(_))), "{:?}", result.err());
     }
 }

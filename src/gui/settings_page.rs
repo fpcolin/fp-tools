@@ -21,6 +21,8 @@ const ID_VC_OVERWRITE: u16 = 408;
 const ID_VC_OPEN: u16 = 409;
 const ID_CHECK_NOW: u16 = 410;
 const ID_REMOVE_OLD: u16 = 411;
+const ID_SCAN_OPEN: u16 = 412;
+const ID_SCAN_ONE_SHEET: u16 = 413;
 
 const NAME_HINT: &str = "If a file with this name is already there, (1), (2)… is added instead of replacing it.";
 
@@ -39,6 +41,8 @@ pub struct Controls {
     pub open_folder: HWND,
     pub vc_overwrite: HWND,
     pub vc_open: HWND,
+    pub scan_open: HWND,
+    pub scan_one_sheet: HWND,
     pub check_now: HWND,
     pub old_text: HWND,
     pub remove_old: HWND,
@@ -60,6 +64,8 @@ pub fn create(page: HWND) -> Controls {
     let open_folder = widgets::checkbox(page, ID_OPEN_FOLDER, "Show it in its folder after saving", w);
     let vc_overwrite = widgets::checkbox(page, ID_VC_OVERWRITE, "Replace the exported file when converting", w);
     let vc_open = widgets::checkbox(page, ID_VC_OPEN, "Show the converted file in its folder", w);
+    let scan_open = widgets::checkbox(page, ID_SCAN_OPEN, "Open the spreadsheet in Excel after saving", w);
+    let scan_one_sheet = widgets::checkbox(page, ID_SCAN_ONE_SHEET, "Put all the pages of a scan on one sheet", w);
     let check_now = widgets::button(page, ID_CHECK_NOW, "Check now", ButtonKind::Secondary, w);
     let old_text = widgets::label(page, "", Font::Body, c::TEXT, w);
     let remove_old = widgets::button(page, ID_REMOVE_OLD, "Remove old apps", ButtonKind::Secondary, w);
@@ -78,6 +84,8 @@ pub fn create(page: HWND) -> Controls {
         open_folder,
         vc_overwrite,
         vc_open,
+        scan_open,
+        scan_one_sheet,
         check_now,
         old_text,
         remove_old,
@@ -144,6 +152,8 @@ pub fn sync() {
     widgets::set_checked(s.open_folder, qr.option_open_folder);
     widgets::set_checked(s.vc_overwrite, cfg.vc.option_overwrite);
     widgets::set_checked(s.vc_open, cfg.vc.option_open_folder);
+    widgets::set_checked(s.scan_open, cfg.scan.option_open_after);
+    widgets::set_checked(s.scan_one_sheet, cfg.scan.option_one_sheet);
     widgets::set_text(s.old_text, &old_text);
     widgets::enable(s.remove_old, can_remove && !removing);
 }
@@ -219,6 +229,19 @@ pub fn layout(ui: &Ui, m: &mut Model, width: f32) -> Frame {
     f.text(RectF::new(x0, y, iw, 22.0), "VendorCafe converter", Font::Heading, c::NAVY, DT_SINGLELINE);
     y += 40.0;
     for cb in [s.vc_overwrite, s.vc_open] {
+        f.place(cb, RectF::new(x0, y, iw, 24.0));
+        y += 34.0;
+    }
+    y += 10.0;
+    f.card_behind(mark, RectF::new(x, card_top, avail, y - card_top));
+
+    // Scan to Excel card.
+    let card_top = y + 20.0;
+    let mark = f.mark();
+    let mut y = card_top + 24.0;
+    f.text(RectF::new(x0, y, iw, 22.0), "Scan to Excel", Font::Heading, c::NAVY, DT_SINGLELINE);
+    y += 40.0;
+    for cb in [s.scan_open, s.scan_one_sheet] {
         f.place(cb, RectF::new(x0, y, iw, 24.0));
         y += 34.0;
     }
@@ -344,6 +367,14 @@ pub fn command(id: u16, code: u16) {
                 st.vc.option_open_folder = open;
             });
             super::sync(PageId::Converter);
+        }
+        ID_SCAN_OPEN | ID_SCAN_ONE_SHEET => {
+            let (open, one) = (flag(s.scan_open), flag(s.scan_one_sheet));
+            update_settings(|st| {
+                st.scan.option_open_after = open;
+                st.scan.option_one_sheet = one;
+            });
+            super::sync(PageId::Scan);
         }
         ID_CHECK_NOW => updates::check_now(),
         ID_REMOVE_OLD => updates::remove_old_apps(false),

@@ -24,6 +24,7 @@ pub mod image;
 pub mod old_apps;
 pub mod qr;
 pub mod render;
+pub mod scan;
 pub mod vcard;
 
 pub use app::APP;

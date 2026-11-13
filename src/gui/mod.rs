@@ -1,5 +1,5 @@
 //! The window: a navy sidebar with the pages (QR codes, VendorCafe
-//! converter, Settings, Help) and the update status, and the current page to
+//! converter, Scan to Excel, Settings, Help) and the update status, and the current page to
 //! its right. Plain Win32 controls, drawn and laid out by this module.
 //!
 //! State lives in two thread-locals: [`Ui`], the control handles (fixed once
@@ -18,6 +18,7 @@ mod dialogs;
 mod help_page;
 mod layout;
 mod qr_page;
+mod scan_page;
 mod settings_page;
 mod theme;
 mod updates;
@@ -46,24 +47,26 @@ const MIN_SIZE: (i32, i32) = (980, 620);
 
 const TIMER_PREVIEW: usize = 1;
 const TIMER_UPDATE_CHECK: usize = 2;
+const TIMER_UPDATE_RETRY: usize = 3;
 /// Posted by background threads after queueing an [`Event`].
 const WM_APP_EVENT: u32 = WM_APP + 1;
 /// Posted once the window is on screen, for start-up questions.
 const WM_APP_STARTED: u32 = WM_APP + 2;
 
-const ID_NAV: [u16; 4] = [101, 102, 103, 104];
+const ID_NAV: [u16; 5] = [101, 102, 103, 104, 105];
 const ID_UPDATE: u16 = 110;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PageId {
     Qr = 0,
     Converter = 1,
-    Settings = 2,
-    Help = 3,
+    Scan = 2,
+    Settings = 3,
+    Help = 4,
 }
 
 impl PageId {
-    const ALL: [PageId; 4] = [PageId::Qr, PageId::Converter, PageId::Settings, PageId::Help];
+    const ALL: [PageId; 5] = [PageId::Qr, PageId::Converter, PageId::Scan, PageId::Settings, PageId::Help];
     fn index(self) -> usize {
         self as usize
     }
@@ -72,11 +75,12 @@ impl PageId {
 /// Control handles. Created once, then only read.
 pub struct Ui {
     pub main: HWND,
-    pub nav: [HWND; 4],
+    pub nav: [HWND; 5],
     pub update_btn: HWND,
-    pub pages: [HWND; 4],
+    pub pages: [HWND; 5],
     pub qr: qr_page::Controls,
     pub vc: converter_page::Controls,
+    pub scan: scan_page::Controls,
     pub settings: settings_page::Controls,
     pub help: help_page::Controls,
 }
@@ -97,6 +101,7 @@ pub enum Event {
         results: Vec<(&'static str, updates::Removal)>,
         automatic: bool,
     },
+    Scan(scan_page::ScanEvent),
 }
 
 pub struct Model {
@@ -104,11 +109,12 @@ pub struct Model {
     pub policy: Policy,
     pub page: PageId,
     /// Last layout of each page (paint list, hit areas) and its scroll offset.
-    pub frames: [Frame; 4],
-    pub scroll: [i32; 4],
+    pub frames: [Frame; 5],
+    pub scroll: [i32; 5],
     pub sidebar: Frame,
     pub qr: qr_page::State,
     pub vc: converter_page::State,
+    pub scan: scan_page::State,
     pub update: updates::UpdateState,
     pub old_apps: Vec<crate::old_apps::OldApp>,
     pub removing_old_apps: bool,
@@ -177,23 +183,26 @@ pub fn attach_parent_console() {
     unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
 }
 
-/// Open the window and run until it is closed.
-pub fn run() -> ExitCode {
-    match std::panic::catch_unwind(run_window) {
+/// Open the window and run until it is closed. With `scan`, start on Scan
+/// to Excel reading that file.
+pub fn run(scan: Option<std::path::PathBuf>) -> ExitCode {
+    match std::panic::catch_unwind(move || run_window(scan)) {
         Ok(code) => code,
         Err(_) => ExitCode::FAILURE,
     }
 }
 
-fn run_window() -> ExitCode {
+fn run_window(scan: Option<std::path::PathBuf>) -> ExitCode {
     let config = config::load();
     let policy = Policy::load();
     std::thread::spawn(|| crate::common::updater::cleanup_stale_downloads(&APP));
 
     let (tx, rx) = channel();
     let start_page = match config.get().last_page {
+        _ if scan.is_some() => PageId::Scan,
         Page::Qr => PageId::Qr,
         Page::Converter => PageId::Converter,
+        Page::Scan => PageId::Scan,
     };
     let qr_kind = config.get().qr_kind;
     let update = updates::UpdateState::initial(&policy);
@@ -203,10 +212,11 @@ fn run_window() -> ExitCode {
             policy,
             page: start_page,
             frames: Default::default(),
-            scroll: [0; 4],
+            scroll: [0; 5],
             sidebar: Frame::default(),
             qr: qr_page::State::new(qr_kind),
             vc: converter_page::State::default(),
+            scan: scan_page::State::default(),
             update,
             old_apps: Vec::new(),
             removing_old_apps: false,
@@ -229,6 +239,9 @@ fn run_window() -> ExitCode {
         SendMessageW(main, WM_CHANGEUISTATE, 0x0003_0003, 0);
     }
     show_page(start_page);
+    if let Some(path) = scan {
+        scan_page::start(path);
+    }
     // SAFETY: live window.
     unsafe {
         PostMessageW(main, WM_APP_STARTED, 0, 0);
@@ -258,22 +271,23 @@ fn message_loop(main: HWND) {
             // Keep the control that the keyboard moved to in view.
             if msg.message == WM_KEYDOWN {
                 let now = GetFocus();
-                if now != before && !now.is_null() {
-                    if let Some(page) = page_of(GetParent(now)) {
-                        scroll_into_view(page, now);
-                    }
+                if now != before
+                    && !now.is_null()
+                    && let Some(page) = page_of(GetParent(now))
+                {
+                    scroll_into_view(page, now);
                 }
             }
         }
     }
 }
 
-/// Ctrl+1..4 switch pages, F1 opens Help.
+/// Ctrl+1..5 switch pages, F1 opens Help.
 fn shortcut(key: usize) -> bool {
     // SAFETY: no pointers.
     let ctrl = unsafe { GetKeyState(VK_CONTROL) } < 0;
     let page = match key {
-        0x31..=0x34 if ctrl => PageId::ALL[key - 0x31],
+        0x31..=0x35 if ctrl => PageId::ALL[key - 0x31],
         VK_F1 => PageId::Help,
         _ => return false,
     };
@@ -380,13 +394,13 @@ fn create_main_window() -> Option<HWND> {
         );
     }
 
-    let nav_labels = ["QR codes", "VendorCafe converter", "Settings", "Help"];
-    let nav_icons = [Icon::Qr, Icon::File, Icon::Gear, Icon::Help];
+    let nav_labels = ["QR codes", "VendorCafe converter", "Scan to Excel", "Settings", "Help"];
+    let nav_icons = [Icon::Qr, Icon::File, Icon::Table, Icon::Gear, Icon::Help];
     let nav = std::array::from_fn(|i| {
         widgets::button(main, ID_NAV[i], nav_labels[i], ButtonKind::Nav(nav_icons[i]), c::NAVY)
     });
     let update_btn = widgets::button(main, ID_UPDATE, "Check for updates", ButtonKind::SidebarAction, c::NAVY_DARK);
-    let pages: [HWND; 4] = std::array::from_fn(|i| create_page(main, i));
+    let pages: [HWND; 5] = std::array::from_fn(|i| create_page(main, i));
     let ui = Ui {
         main,
         nav,
@@ -394,8 +408,9 @@ fn create_main_window() -> Option<HWND> {
         pages,
         qr: qr_page::create(pages[0]),
         vc: converter_page::create(pages[1]),
-        settings: settings_page::create(pages[2]),
-        help: help_page::create(pages[3]),
+        scan: scan_page::create(pages[2]),
+        settings: settings_page::create(pages[3]),
+        help: help_page::create(pages[4]),
     };
     UI.with(|u| u.set(Some(Box::leak(Box::new(ui)))));
     on_size();
@@ -403,6 +418,7 @@ fn create_main_window() -> Option<HWND> {
     // them back.
     qr_page::sync();
     converter_page::sync();
+    scan_page::sync();
     settings_page::sync();
     Some(main)
 }
@@ -479,6 +495,7 @@ pub fn show_page(page: PageId) {
     match page {
         PageId::Qr => update_settings(|s| s.last_page = Page::Qr),
         PageId::Converter => update_settings(|s| s.last_page = Page::Converter),
+        PageId::Scan => update_settings(|s| s.last_page = Page::Scan),
         _ => {}
     }
     for p in PageId::ALL {
@@ -492,6 +509,7 @@ pub fn show_page(page: PageId) {
     let first = match page {
         PageId::Qr => qr_page::first_control(),
         PageId::Converter => ui.vc.file_button,
+        PageId::Scan => ui.scan.file_button,
         PageId::Settings => ui.settings.change_folder,
         PageId::Help => ui.help.open_settings,
     };
@@ -503,6 +521,7 @@ pub fn sync(page: PageId) {
     match page {
         PageId::Qr => qr_page::sync(),
         PageId::Converter => converter_page::sync(),
+        PageId::Scan => scan_page::sync(),
         PageId::Settings => settings_page::sync(),
         PageId::Help => help_page::sync(),
     }
@@ -534,6 +553,7 @@ pub fn relayout(page: PageId) {
         let Some(built) = with(|m| match page {
             PageId::Qr => qr_page::layout(ui, m, width),
             PageId::Converter => converter_page::layout(ui, m, width),
+            PageId::Scan => scan_page::layout(ui, m, width),
             PageId::Settings => settings_page::layout(ui, m, width),
             PageId::Help => help_page::layout(ui, m, width),
         }) else {
@@ -780,6 +800,7 @@ fn on_command(page: PageId, id: u16, code: u16, control: HWND) {
     match page {
         PageId::Qr => qr_page::command(id, code, control),
         PageId::Converter => converter_page::command(id, code),
+        PageId::Scan => scan_page::command(id, code),
         PageId::Settings => settings_page::command(id, code),
         PageId::Help => help_page::command(id, code),
     }
@@ -877,6 +898,7 @@ fn main_message(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> Option<LRESULT> {
             match w {
                 TIMER_PREVIEW => qr_page::refresh_preview(),
                 TIMER_UPDATE_CHECK => updates::start_check(false),
+                TIMER_UPDATE_RETRY => updates::retry_check(),
                 _ => {}
             }
             Some(0)
@@ -886,6 +908,7 @@ fn main_message(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> Option<LRESULT> {
                 match event {
                     Event::Update(e) => updates::on_event(e),
                     Event::OldAppsRemoved { results, automatic } => updates::old_apps_removed(results, automatic),
+                    Event::Scan(e) => scan_page::on_event(e),
                 }
             }
             Some(0)
@@ -935,6 +958,7 @@ fn enter_pressed() {
     match with(|m| m.page) {
         Some(PageId::Qr) => qr_page::save(),
         Some(PageId::Converter) => converter_page::convert(),
+        Some(PageId::Scan) => scan_page::enter(),
         _ => {}
     }
 }

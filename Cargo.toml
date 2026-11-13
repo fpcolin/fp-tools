@@ -2,10 +2,10 @@
 name = "fp-tools"
 # Single source of truth for the version: the exe's file properties, the
 # installer and the release tag are all derived from this.
-version = "3.0.3"
+version = "3.1.0"
 edition = "2024"
-rust-version = "1.85"
-description = "Flooring Partners App: QR codes and the VendorCafe CSV converter"
+rust-version = "1.94"
+description = "Flooring Partners App: QR codes, the VendorCafe CSV converter and Scan to Excel"
 license-file = "LICENSE.txt"
 publish = false
 build = "build.rs"
@@ -26,6 +26,13 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 webpki-roots = "1"
 # Already a dependency of rustls; used directly for SHA-256 and random numbers.
 ring = "0.17"
+# Scan to Excel: the OCR engine (pure Rust, by Robert Knight) and the neural
+# network runtime it runs on. Models are loaded from ONNX files embedded in
+# the exe (see src/scan/ocr.rs). No GPU, no DLLs.
+ocrs = { version = "0.14", default-features = false, features = ["onnx"] }
+rten = { version = "0.28", default-features = false, features = ["onnx_format"] }
+rten-imageproc = "0.28"
+rten-tensor = "0.28"
 
 [patch.crates-io]
 # ring's random numbers come from getrandom 0.2, which would import bcrypt.dll

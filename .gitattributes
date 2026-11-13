@@ -71,3 +71,9 @@
 *.ps1     text eol=crlf
 *.ico     binary
 *.png     binary
+*.jpg     binary
+*.pdf     binary
+*.tif     binary
+*.tiff    binary
+*.onnx    binary
+*.xlsx    binary

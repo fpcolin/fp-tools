@@ -19,8 +19,10 @@ pub enum Item {
     Icon(RectF, Icon, u32),
     /// Horizontal hairline.
     Rule(f32, f32, f32, u32),
-    /// Progress bar, 0..1.
+    /// Progress bar, 0..1 (on the dark sidebar).
     Progress(RectF, f32),
+    /// Progress bar, 0..1, on a page.
+    Meter(RectF, f32),
 }
 
 #[derive(Default)]
@@ -201,6 +203,12 @@ pub fn paint(cv: &mut Canvas, items: &[Item], scroll_px: i32) {
                 cv.fill_rrect(r, r.h / 2.0, c::SIDEBAR_LINE);
                 let done = RectF::new(r.x, r.y, (r.w * frac.clamp(0.0, 1.0)).max(r.h), r.h);
                 cv.fill_rrect(done, r.h / 2.0, c::GOLD);
+            }
+            Item::Meter(r, frac) => {
+                let r = to_f(*r);
+                cv.fill_rrect(r, r.h / 2.0, c::SEGMENT);
+                let done = RectF::new(r.x, r.y, (r.w * frac.clamp(0.0, 1.0)).max(r.h), r.h);
+                cv.fill_rrect(done, r.h / 2.0, c::NAVY);
             }
         }
     }

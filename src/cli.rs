@@ -31,6 +31,11 @@ VendorCafe converter:
   FPTools convert po|wo [<file.csv>]       po: the customer uses a PO number
                                            wo: the customer uses a work order number
 
+Scan to Excel:
+  FPTools scan <scan> [--out <file.xlsx>] [--one-sheet] [--open]
+                                           read the tables in a scanned PDF,
+                                           TIFF, JPEG or PNG into a workbook
+
 Settings:
   FPTools settings
   FPTools set folder <folder>              where QR codes are saved
@@ -38,7 +43,8 @@ Settings:
   FPTools set image <file>|default         image in the middle of QR codes
   FPTools set <option> on|off              open-image, open-folder, embed-logo,
                                            round-edges, convert-overwrite,
-                                           convert-open-folder
+                                           convert-open-folder, scan-open,
+                                           scan-one-sheet
 
 Updates:
   FPTools check-updates
@@ -70,12 +76,75 @@ pub fn run(args: &[String]) -> ExitCode {
             };
             convert(mode, rest.first().copied())
         }
+        ["scan", file, rest @ ..] => scan(file, rest),
         ["settings"] => show_settings(),
         ["set", key, value] => set(key, value),
         ["check-updates"] => check_updates(),
         ["update"] => update(),
         _ => usage_error("Unrecognised command."),
     }
+}
+
+/// Scan to Excel from the command line.
+fn scan(file: &str, args: &[&str]) -> ExitCode {
+    let (mut out, mut one_sheet, mut open) = (None, None, false);
+    let mut it = args.iter();
+    while let Some(&arg) = it.next() {
+        match arg {
+            "--out" => match it.next() {
+                Some(&o) => out = Some(std::path::PathBuf::from(o)),
+                None => return usage_error("--out needs a file name."),
+            },
+            "--one-sheet" => one_sheet = Some(true),
+            "--open" => open = true,
+            other => return usage_error(&format!("Unknown option {other}.")),
+        }
+    }
+    let one_sheet = one_sheet.unwrap_or_else(|| config::load().get().scan.option_one_sheet);
+    let source = Path::new(file);
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let pages = match crate::scan::read_file(source, &cancel, |done, total| {
+        if done < total {
+            eprintln!("Reading page {} of {total}...", done + 1);
+        }
+    }) {
+        Ok(p) => p,
+        Err(e) => return fail(&e.to_string()),
+    };
+    let bytes = crate::scan::workbook(&pages, one_sheet);
+    let target = match out {
+        Some(o) => match crate::common::fsutil::write_atomic(&o, &bytes) {
+            Ok(()) => o,
+            Err(e) => return fail(&format!("Couldn't save {}: {e}", o.display())),
+        },
+        None => {
+            let folder = source.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+            let stem = source.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "scan".into());
+            match crate::common::fsutil::create_unique(folder, &stem, ".xlsx") {
+                Ok((path, mut f)) => {
+                    use std::io::Write;
+                    if let Err(e) = f.write_all(&bytes).and_then(|()| f.sync_all()) {
+                        drop(f);
+                        let _ = std::fs::remove_file(&path);
+                        return fail(&format!("Couldn't save {}: {e}", path.display()));
+                    }
+                    path
+                }
+                Err(e) => return fail(&format!("Couldn't save in {}: {e}", folder.display())),
+            }
+        }
+    };
+    let cells: usize = pages.iter().map(|p| p.cells.iter().filter(|c| c.value.is_some()).count()).sum();
+    println!(
+        "Saved {} ({} page{}, {cells} cells)",
+        target.display(),
+        pages.len(),
+        if pages.len() == 1 { "" } else { "s" }
+    );
+    if open {
+        let _ = shell::open(&target);
+    }
+    ExitCode::SUCCESS
 }
 
 fn fail(message: &str) -> ExitCode {
@@ -192,7 +261,14 @@ fn set(key: &str, value: &str) -> ExitCode {
             }
             cfg.update(|s| s.qr.embed_image = path.to_string_lossy().into_owned())
         }
-        "open-image" | "open-folder" | "embed-logo" | "round-edges" | "convert-overwrite" | "convert-open-folder" => {
+        "open-image"
+        | "open-folder"
+        | "embed-logo"
+        | "round-edges"
+        | "convert-overwrite"
+        | "convert-open-folder"
+        | "scan-open"
+        | "scan-one-sheet" => {
             let Some(on) = on_off(value) else { return usage_error("Use on or off.") };
             cfg.update(|s| match key {
                 "open-image" => s.qr.option_open_image = on,
@@ -200,6 +276,8 @@ fn set(key: &str, value: &str) -> ExitCode {
                 "embed-logo" => s.qr.option_embed_logo = on,
                 "round-edges" => s.qr.option_round_edges = on,
                 "convert-overwrite" => s.vc.option_overwrite = on,
+                "scan-open" => s.scan.option_open_after = on,
+                "scan-one-sheet" => s.scan.option_one_sheet = on,
                 _ => s.vc.option_open_folder = on,
             })
         }
@@ -234,6 +312,11 @@ fn show_settings() -> ExitCode {
     println!("  Selected file:      {}", if vc.filepath.is_empty() { "none selected" } else { &vc.filepath });
     println!("  convert-overwrite:  {}", yn(vc.option_overwrite));
     println!("  convert-open-folder: {}", yn(vc.option_open_folder));
+    println!();
+    let scan = &cfg.get().scan;
+    println!("Scan to Excel");
+    println!("  scan-open:          {}", yn(scan.option_open_after));
+    println!("  scan-one-sheet:     {}", yn(scan.option_one_sheet));
     ExitCode::SUCCESS
 }
 

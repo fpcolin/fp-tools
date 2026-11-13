@@ -496,10 +496,10 @@ fn logo(m: &mut Model) -> LogoResult {
         return Ok(None);
     }
     let key = s.embed_image.clone();
-    if let Some((k, result)) = &m.qr.logo {
-        if *k == key {
-            return result.clone();
-        }
+    if let Some((k, result)) = &m.qr.logo
+        && *k == key
+    {
+        return result.clone();
     }
     let result = generator::logo_for(&key).map(|o| o.map(|img| Rc::new(img.into_owned()))).map_err(|e| e.to_string());
     m.qr.logo = Some((key, result.clone()));

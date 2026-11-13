@@ -16,8 +16,11 @@ use crate::common::updater::{self, Downloaded, Release, UpdateError};
 pub enum UpdateState {
     /// Waiting for the automatic check shortly after start-up.
     Pending,
+    /// `attempt` counts from 1; the automatic check tries a few times
+    /// before saying it failed.
     Checking {
         manual: bool,
+        attempt: u8,
     },
     UpToDate,
     Available(Release),
@@ -29,8 +32,9 @@ pub enum UpdateState {
     },
     /// Setup is running; the window is hidden.
     Installing(Release),
-    /// The last check failed (details only shown for a manual check).
-    Failed,
+    /// The last check failed, and why (shown in Settings, and in the message
+    /// for a manual check).
+    Failed(String),
     /// Turned off in policy.ini, or policy.ini could not be read.
     Disabled {
         unreadable: bool,
@@ -94,7 +98,7 @@ fn card_content(m: &Model) -> CardContent {
         UpdateState::Installing(r) => {
             (Icon::Download, c::GOLD, format!("Installing version {}…", r.version), None, None)
         }
-        UpdateState::Failed => (
+        UpdateState::Failed(_) => (
             Icon::Alert,
             c::NAV_MUTED,
             "Couldn't check for updates".into(),
@@ -132,11 +136,11 @@ pub fn sidebar_layout(ui: &Ui, m: &mut Model, height: f32) -> Frame {
     );
     f.text(RectF::new(72.0, 41.0, 150.0, 18.0), "App", Font::Small, c::NAV_MUTED, DT_SINGLELINE);
 
-    let ys = [88.0, 132.0, 198.0, 242.0];
+    let ys = [88.0, 132.0, 176.0, 242.0, 286.0];
     for (i, y) in ys.into_iter().enumerate() {
         f.place(ui.nav[i], RectF::new(12.0, y, 220.0, 40.0));
     }
-    f.items.push(Item::Rule(24.0, 186.0, 196.0, c::SIDEBAR_LINE));
+    f.items.push(Item::Rule(24.0, 230.0, 196.0, c::SIDEBAR_LINE));
 
     let (icon, icon_color, status, button, progress) = card_content(m);
     let status_h = text_height(Font::Small, &status, 168.0).max(18.0);
@@ -147,7 +151,7 @@ pub fn sidebar_layout(ui: &Ui, m: &mut Model, height: f32) -> Frame {
     if button.is_some() {
         h += 34.0 + 2.0;
     }
-    let top = (height - 16.0 - h).max(296.0);
+    let top = (height - 16.0 - h).max(340.0);
     f.panel(RectF::new(12.0, top, 220.0, h), c::NAVY_DARK, c::NAVY_DARK, 10.0);
     f.text(
         RectF::new(26.0, top + 14.0, 180.0, 18.0),
@@ -206,13 +210,31 @@ pub fn start_check(manual: bool) {
     {
         return;
     }
-    set_state(UpdateState::Checking { manual });
+    begin_check(manual, 1);
+}
+
+/// Pauses before the automatic check tries again: a blip in the network,
+/// or GitHub being slow for a moment, shouldn't show as a failure.
+const RETRY_DELAYS_MS: [u32; 2] = [15_000, 60_000];
+
+fn begin_check(manual: bool, attempt: u8) {
+    set_state(UpdateState::Checking { manual, attempt });
     let Some((policy, events)) = with(|m| (m.policy.clone(), m.events.clone())) else { return };
     let main = super::main_handle();
     std::thread::spawn(move || {
         let result = updater::check(&APP, &policy);
         post(&events, main, Event::Update(UpdateEvent::Checked { manual, result }));
     });
+}
+
+/// The retry timer fired.
+pub fn retry_check() {
+    if let Some(Some(attempt)) = with(|m| match m.update {
+        UpdateState::Checking { manual: false, attempt } => Some(attempt),
+        _ => None,
+    }) {
+        begin_check(false, attempt + 1);
+    }
 }
 
 /// The sidebar button: check, install or cancel depending on the state.
@@ -224,7 +246,7 @@ pub fn button_clicked() {
         Nothing,
     }
     let action = with(|m| match &m.update {
-        UpdateState::UpToDate | UpdateState::Failed => Action::Check,
+        UpdateState::UpToDate | UpdateState::Failed(_) => Action::Check,
         UpdateState::Available(r) => Action::Install(r.clone()),
         UpdateState::Downloading { cancel, .. } => Action::Cancel(cancel.clone()),
         _ => Action::Nothing,
@@ -283,7 +305,18 @@ pub fn on_event(event: UpdateEvent) {
                 }
             }
             Err(e) => {
-                set_state(UpdateState::Failed);
+                let attempt = with(|m| match m.update {
+                    UpdateState::Checking { attempt, .. } => attempt,
+                    _ => 1,
+                })
+                .unwrap_or(1);
+                if !manual && let Some(&delay) = RETRY_DELAYS_MS.get(usize::from(attempt) - 1) {
+                    // Still "Checking for updates…" in the sidebar.
+                    // SAFETY: live window; one-shot timer.
+                    unsafe { SetTimer(ui().main, super::TIMER_UPDATE_RETRY, delay, std::ptr::null()) };
+                    return;
+                }
+                set_state(UpdateState::Failed(e.to_string()));
                 if manual {
                     message(&format!("Couldn't check for updates.\n\n{e}"), MB_ICONWARNING);
                 }
@@ -401,7 +434,7 @@ pub fn checks_text(m: &Model) -> String {
         UpdateState::Disabled { unreadable: false } => "Managed by your IT department".into(),
         UpdateState::UpToDate => "Automatic when the app starts · up to date".into(),
         UpdateState::Available(r) => format!("Automatic when the app starts · version {} is available", r.version),
-        UpdateState::Failed => "Automatic when the app starts · the last check failed".into(),
+        UpdateState::Failed(reason) => format!("Automatic when the app starts · the last check failed: {reason}"),
         _ => "Automatic when the app starts".into(),
     }
 }
