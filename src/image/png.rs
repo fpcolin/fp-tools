@@ -139,7 +139,7 @@ pub fn decode(data: &[u8], limits: &Limits) -> Result<Image, DecodeError> {
                 if body.len() % 3 != 0 || body.len() > 256 * 3 || seen_idat {
                     return Err(DecodeError::Invalid("bad palette"));
                 }
-                palette = body.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+                palette = body.as_chunks::<3>().0.to_vec();
             }
             b"tRNS" if !seen_idat => trns = Some(body.to_vec()),
             b"IDAT" => {
@@ -328,7 +328,7 @@ pub fn encode(img: &Image) -> Vec<u8> {
     let mut candidates: [Vec<u8>; 5] = std::array::from_fn(|_| vec![0u8; line]);
 
     for row in img.pixels.chunks_exact(width * 4) {
-        for (dst, px) in cur.chunks_exact_mut(channels).zip(row.chunks_exact(4)) {
+        for (dst, px) in cur.chunks_exact_mut(channels).zip(row.as_chunks::<4>().0) {
             dst.copy_from_slice(&px[..channels]);
         }
         // Try all five filters; keep the one with the smallest sum of

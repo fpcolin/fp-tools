@@ -393,7 +393,7 @@ fn parse_frame(body: &[u8], progressive: bool, limits: &Limits) -> Result<Frame,
     }
     let specs = body.get(6..6 + 3 * n).ok_or(DecodeError::Truncated)?;
     let mut comps = Vec::with_capacity(n);
-    for c in specs.chunks_exact(3) {
+    for c in specs.as_chunks::<3>().0 {
         let (h, v) = (usize::from(c[1] >> 4), usize::from(c[1] & 15));
         if !(1..=4).contains(&h) || !(1..=4).contains(&v) || c[2] > 3 {
             return Err(DecodeError::Invalid("bad component"));

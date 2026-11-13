@@ -22,7 +22,9 @@ impl Gray {
     pub fn from_rgba(img: &crate::image::Image) -> Gray {
         let px = img
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|p| {
                 let y = u32::from(luma(p[0], p[1], p[2]));
                 let a = u32::from(p[3]);

@@ -29,7 +29,9 @@ impl Bitmap {
         let (br, bg, bb) = ((background >> 16) & 0xFF, (background >> 8) & 0xFF, background & 0xFF);
         let pixels = img
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|p| {
                 let a = u32::from(p[3]);
                 let mix = |c: u8, b: u32| (u32::from(c) * a + b * (255 - a) + 127) / 255;

@@ -83,7 +83,7 @@ pub fn resize(img: &Image, width: u32, height: u32) -> Image {
 
     // Premultiply.
     let mut src = img.pixels.clone();
-    for px in src.chunks_exact_mut(4) {
+    for px in src.as_chunks_mut::<4>().0 {
         let a = u32::from(px[3]);
         for c in &mut px[..3] {
             *c = ((u32::from(*c) * a + 127) / 255) as u8;
@@ -107,7 +107,7 @@ pub fn resize(img: &Image, width: u32, height: u32) -> Image {
     };
 
     // Back to straight alpha.
-    for px in out.chunks_exact_mut(4) {
+    for px in out.as_chunks_mut::<4>().0 {
         let a = u32::from(px[3]);
         for c in &mut px[..3] {
             *c = (u32::from(*c) * 255 + a / 2).checked_div(a).map_or(0, |v| v.min(255) as u8);
